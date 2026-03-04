@@ -1,4 +1,7 @@
-use super::message::*;
+use super::{
+    message::*,
+    ws_dave::{self, DaveState},
+};
 use crate::{
     events::CoreContext,
     model::{
@@ -38,6 +41,8 @@ pub(crate) struct AuxNetwork {
 
     #[cfg(feature = "receive")]
     ssrc_signalling: Arc<SsrcTracker>,
+
+    dave_state: DaveState,
 }
 
 impl AuxNetwork {
@@ -66,6 +71,8 @@ impl AuxNetwork {
 
             #[cfg(feature = "receive")]
             ssrc_signalling,
+
+            dave_state: DaveState::default(),
         }
     }
 
@@ -210,14 +217,27 @@ impl AuxNetwork {
     }
 
     fn process_ws_binary(&mut self, _interconnect: &Interconnect, payload: bytes::Bytes) {
-        match crate::driver::tasks::ws_dave::parse_binary_gateway_packet(&payload) {
+        match ws_dave::parse_binary_gateway_packet(&payload) {
             Some(pkt) => {
-                trace!(
-                    opcode = pkt.opcode,
-                    sequence = pkt.sequence,
-                    payload_len = pkt.payload.len(),
-                    "Received binary voice gateway payload"
-                );
+                self.dave_state.on_binary_packet(&pkt);
+                match ws_dave::DaveBinaryOpcode::from_u8(pkt.opcode) {
+                    Some(opcode) => {
+                        trace!(
+                            ?opcode,
+                            sequence = pkt.sequence,
+                            payload_len = pkt.payload.len(),
+                            "Received DAVE binary voice gateway payload"
+                        );
+                    },
+                    None => {
+                        trace!(
+                            opcode = pkt.opcode,
+                            sequence = pkt.sequence,
+                            payload_len = pkt.payload.len(),
+                            "Received non-DAVE binary voice gateway payload"
+                        );
+                    },
+                }
             },
             None => {
                 trace!(
@@ -230,8 +250,52 @@ impl AuxNetwork {
 
     fn process_ws_unknown_json(&mut self, _interconnect: &Interconnect, op: u8, data: Value) {
         match op {
-            21 | 22 | 24 | 31 => {
-                trace!(op, data = %data, "Received DAVE-related voice gateway opcode");
+            21 => {
+                if let Some(msg) = ws_dave::parse_prepare_transition(&data) {
+                    self.dave_state.on_prepare_transition(msg);
+                    trace!(
+                        transition_id = msg.transition_id,
+                        protocol_version = msg.protocol_version,
+                        "Processed DAVE prepare transition"
+                    );
+                } else {
+                    trace!(op, data = %data, "Malformed DAVE prepare transition payload");
+                }
+            },
+            22 => {
+                if let Some(msg) = ws_dave::parse_execute_transition(&data) {
+                    self.dave_state.on_execute_transition(msg);
+                    trace!(
+                        transition_id = msg.transition_id,
+                        "Processed DAVE execute transition"
+                    );
+                } else {
+                    trace!(op, data = %data, "Malformed DAVE execute transition payload");
+                }
+            },
+            24 => {
+                if let Some(msg) = ws_dave::parse_prepare_epoch(&data) {
+                    self.dave_state.on_prepare_epoch(msg);
+                    trace!(
+                        transition_id = msg.transition_id,
+                        protocol_version = msg.protocol_version,
+                        epoch = msg.epoch,
+                        "Processed DAVE prepare epoch"
+                    );
+                } else {
+                    trace!(op, data = %data, "Malformed DAVE prepare epoch payload");
+                }
+            },
+            31 => {
+                if let Some(msg) = ws_dave::parse_invalid_commit_welcome(&data) {
+                    self.dave_state.on_invalid_commit_welcome(msg);
+                    trace!(
+                        transition_id = msg.transition_id,
+                        "Processed DAVE invalid commit/welcome"
+                    );
+                } else {
+                    trace!(op, data = %data, "Malformed DAVE invalid commit/welcome payload");
+                }
             },
             _ => {
                 trace!(op, data = %data, "Received unknown voice gateway JSON opcode");
