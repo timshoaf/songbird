@@ -8,15 +8,13 @@ use super::{
         message::*,
         ws::{self as ws_task, AuxNetwork},
     },
-    Config,
-    CryptoMode,
+    Config, CryptoMode,
 };
 use crate::{
     constants::*,
     model::{
         payload::{Identify, Resume, SelectProtocol},
-        Event as GatewayEvent,
-        ProtocolData,
+        Event as GatewayEvent, ProtocolData,
     },
     ws::WsStream,
     ConnectionInfo,
@@ -76,29 +74,36 @@ impl Connection {
             .await?;
 
         loop {
-            let Some(value) = client.recv_json().await? else {
+            let Some(message) = client.recv_event().await? else {
                 continue;
             };
 
-            match value {
-                GatewayEvent::Ready(r) => {
+            match message {
+                crate::ws::GatewayMessage::Json(GatewayEvent::Ready(r)) => {
                     ready = Some(r);
                     if hello.is_some() {
                         break;
                     }
                 },
-                GatewayEvent::Hello(h) => {
+                crate::ws::GatewayMessage::Json(GatewayEvent::Hello(h)) => {
                     hello = Some(h);
                     if ready.is_some() {
                         break;
                     }
                 },
-                other => {
+                crate::ws::GatewayMessage::Json(other) => {
                     // Discord hold back per-user connection state until after this handshake.
                     // There's no guarantee that will remain the case, so buffer it like all
                     // subsequent steps where we know they *do* send these packets.
                     debug!("Expected ready/hello; got: {:?}", other);
                     ws_msg_tx.send(WsMessage::Deliver(other))?;
+                },
+                crate::ws::GatewayMessage::Binary(other) => {
+                    debug!(
+                        "Expected ready/hello json; got binary payload len={}",
+                        other.len()
+                    );
+                    ws_msg_tx.send(WsMessage::DeliverBinary(other))?;
                 },
             }
         }
@@ -290,25 +295,28 @@ impl Connection {
         let mut resumed = None;
 
         loop {
-            let Some(value) = client.recv_json().await? else {
+            let Some(message) = client.recv_event().await? else {
                 continue;
             };
 
-            match value {
-                GatewayEvent::Resumed => {
+            match message {
+                crate::ws::GatewayMessage::Json(GatewayEvent::Resumed) => {
                     resumed = Some(());
                     if hello.is_some() {
                         break;
                     }
                 },
-                GatewayEvent::Hello(h) => {
+                crate::ws::GatewayMessage::Json(GatewayEvent::Hello(h)) => {
                     hello = Some(h);
                     if resumed.is_some() {
                         break;
                     }
                 },
-                other => {
+                crate::ws::GatewayMessage::Json(other) => {
                     self.ws.send(WsMessage::Deliver(other))?;
+                },
+                crate::ws::GatewayMessage::Binary(other) => {
+                    self.ws.send(WsMessage::DeliverBinary(other))?;
                 },
             }
         }
@@ -342,7 +350,7 @@ async fn init_cipher(
     tx: &Sender<WsMessage>,
 ) -> Result<Cipher> {
     loop {
-        let Some(value) = client.recv_json().await? else {
+        let Some(message) = client.recv_event().await? else {
             continue;
         };
 
@@ -356,10 +364,13 @@ async fn init_cipher(
                     .cipher_from_key(&desc.secret_key)
                     .map_err(|_| Error::CryptoInvalidLength);
             },
-            other => {
+            crate::ws::GatewayMessage::Json(other) => {
                 // Discord can and will send user-specific payload packets during this time
                 // which are needed to map SSRCs to `UserId`s.
                 tx.send(WsMessage::Deliver(other))?;
+            },
+            crate::ws::GatewayMessage::Binary(other) => {
+                tx.send(WsMessage::DeliverBinary(other))?;
             },
         }
     }

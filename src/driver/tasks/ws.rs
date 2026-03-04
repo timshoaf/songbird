@@ -3,10 +3,7 @@ use crate::{
     events::CoreContext,
     model::{
         payload::{Heartbeat, Speaking},
-        CloseCode as VoiceCloseCode,
-        Event as GatewayEvent,
-        FromPrimitive,
-        SpeakingState,
+        CloseCode as VoiceCloseCode, Event as GatewayEvent, FromPrimitive, SpeakingState,
     },
     ws::{Error as WsError, WsStream},
     ConnectionInfo,
@@ -94,15 +91,19 @@ impl AuxNetwork {
                     };
                     next_heartbeat = self.next_heartbeat();
                 }
-                ws_msg = self.ws_client.recv_json_no_timeout(), if !self.dont_send => {
+                ws_msg = self.ws_client.recv_event_no_timeout(), if !self.dont_send => {
                     ws_error = match ws_msg {
                         Err(e) => {
                             should_reconnect = ws_error_is_not_final(&e);
                             ws_reason = Some((&e).into());
                             true
                         },
-                        Ok(Some(msg)) => {
+                        Ok(Some(crate::ws::GatewayMessage::Json(msg))) => {
                             self.process_ws(interconnect, msg);
+                            false
+                        },
+                        Ok(Some(crate::ws::GatewayMessage::Binary(msg))) => {
+                            self.process_ws_binary(interconnect, msg);
                             false
                         },
                         _ => false,
@@ -148,6 +149,9 @@ impl AuxNetwork {
                         },
                         Ok(WsMessage::Deliver(msg)) => {
                             self.process_ws(interconnect, msg);
+                        },
+                        Ok(WsMessage::DeliverBinary(msg)) => {
+                            self.process_ws_binary(interconnect, msg);
                         },
                         Err(flume::RecvError::Disconnected) => {
                             break;
@@ -195,6 +199,13 @@ impl AuxNetwork {
         }
 
         Ok(())
+    }
+
+    fn process_ws_binary(&mut self, _interconnect: &Interconnect, payload: bytes::Bytes) {
+        // DAVE/MLS voice gateway events use binary payload framing.
+        // Infra support is present here to keep the WS alive and allow future
+        // driver integration to decode and handle opcodes 25-30.
+        trace!(len = payload.len(), "Received binary voice gateway payload");
     }
 
     fn process_ws(&mut self, interconnect: &Interconnect, value: GatewayEvent) {
@@ -252,22 +263,24 @@ fn ws_error_is_not_final(err: &WsError) -> bool {
     match err {
         #[cfg(feature = "tungstenite")]
         WsError::WsClosed(Some(frame)) => match frame.code {
-            CloseCode::Library(l) =>
+            CloseCode::Library(l) => {
                 if let Some(code) = VoiceCloseCode::from_u16(l) {
                     code.should_resume()
                 } else {
                     true
-                },
+                }
+            },
             _ => true,
         },
         #[cfg(feature = "tws")]
         WsError::WsClosed(Some(code)) => match (*code).into() {
-            code @ 4000..=4999_u16 =>
+            code @ 4000..=4999_u16 => {
                 if let Some(code) = VoiceCloseCode::from_u16(code) {
                     code.should_resume()
                 } else {
                     true
-                },
+                }
+            },
             _ => true,
         },
         e => {
