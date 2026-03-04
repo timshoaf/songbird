@@ -4,7 +4,7 @@ mod ssrc_state;
 
 use self::{decode_sizes::*, playout_buffer::*, ssrc_state::*};
 
-use super::message::*;
+use super::{message::*, ws_dave::SharedDaveState};
 use crate::driver::CryptoMode;
 use crate::{
     constants::*,
@@ -38,6 +38,7 @@ struct UdpRx {
     config: Config,
     rx: Receiver<UdpRxMessage>,
     ssrc_signalling: Arc<SsrcTracker>,
+    dave_state: SharedDaveState,
     udp_socket: UdpSocket,
 }
 
@@ -174,14 +175,49 @@ impl UdpRx {
                     None
                 };
 
-                let rtp = rtp.to_immutable();
-                let (rtp_body_start, rtp_body_tail, decrypted) = packet_data.unwrap_or_else(|| {
-                    (
-                        crypto_mode.payload_prefix_len(),
-                        crypto_mode.payload_suffix_len(),
-                        false,
-                    )
+                let mut rtp_body_start = crypto_mode.payload_prefix_len();
+                let mut rtp_body_tail = crypto_mode.payload_suffix_len();
+                let mut decrypted = false;
+                if let Some((s, t, d)) = packet_data {
+                    rtp_body_start = s;
+                    rtp_body_tail = t;
+                    decrypted = d;
+                }
+
+                let sender_user_id = self.ssrc_signalling.user_ssrc_map.iter().find_map(|kv| {
+                    if *kv.value() == rtp.get_ssrc() {
+                        Some(kv.key().0)
+                    } else {
+                        None
+                    }
                 });
+
+                #[cfg(feature = "dave-e2ee")]
+                if let Some(user_id) = sender_user_id {
+                    let payload = rtp.payload();
+                    if payload.len() >= rtp_body_start + rtp_body_tail {
+                        let encrypted_slice =
+                            &payload[rtp_body_start..payload.len() - rtp_body_tail];
+                        let decrypted_payload = {
+                            let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                            dave.decrypt_opus_for_user(user_id, encrypted_slice)
+                        };
+
+                        if let Some(plain) = decrypted_payload {
+                            let payload_len = payload.len();
+                            if rtp_body_start + plain.len() <= payload_len {
+                                if let Some(payload_mut) = rtp.payload_mut() {
+                                    payload_mut[rtp_body_start..rtp_body_start + plain.len()]
+                                        .copy_from_slice(&plain);
+                                    rtp_body_tail = payload_len - (rtp_body_start + plain.len());
+                                    decrypted = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let rtp = rtp.to_immutable();
 
                 let entry = self
                     .decoder_map
@@ -191,14 +227,6 @@ impl UdpRx {
                 // Only do this on RTP, rather than RTCP -- this pins decoder state liveness
                 // to *speech* rather than just presence.
                 entry.refresh_timer(self.config.decode_state_timeout);
-
-                let sender_user_id = self.ssrc_signalling.user_ssrc_map.iter().find_map(|kv| {
-                    if *kv.value() == rtp.get_ssrc() {
-                        Some(kv.key().0)
-                    } else {
-                        None
-                    }
-                });
 
                 let store_pkt = StoredPacket {
                     packet: packet.freeze(),
@@ -263,6 +291,7 @@ pub(crate) async fn runner(
     config: Config,
     udp_socket: UdpSocket,
     ssrc_signalling: Arc<SsrcTracker>,
+    dave_state: SharedDaveState,
 ) {
     trace!("UDP receive handle started.");
 
@@ -273,6 +302,7 @@ pub(crate) async fn runner(
         config,
         rx,
         ssrc_signalling,
+        dave_state,
         udp_socket,
     };
 

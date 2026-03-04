@@ -1,11 +1,14 @@
 use bytes::Bytes;
 #[cfg(feature = "dave-e2ee")]
-use davey::{DaveSession, ProposalsOperationType, DAVE_PROTOCOL_VERSION};
+use davey::{DaveSession, MediaType, ProposalsOperationType, DAVE_PROTOCOL_VERSION};
 use serde::Deserialize;
 use serde_json::Value;
-use std::collections::VecDeque;
 #[cfg(feature = "dave-e2ee")]
 use std::num::NonZeroU16;
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct BinaryGatewayPacket {
@@ -42,6 +45,12 @@ impl DaveBinaryOpcode {
 pub(crate) enum DaveOutboundMessage {
     Json { op: u8, data: Value },
     Binary { opcode: u8, payload: Bytes },
+}
+
+pub(crate) type SharedDaveState = Arc<Mutex<DaveState>>;
+
+pub(crate) fn new_shared_state() -> SharedDaveState {
+    Arc::new(Mutex::new(DaveState::default()))
 }
 
 #[derive(Debug, Default)]
@@ -271,6 +280,16 @@ impl DaveState {
     #[cfg(feature = "dave-e2ee")]
     pub(crate) fn take_pending_key_package(&mut self) -> Option<Bytes> {
         self.pending_key_package.take()
+    }
+
+    #[cfg(feature = "dave-e2ee")]
+    pub(crate) fn decrypt_opus_for_user(&mut self, user_id: u64, packet: &[u8]) -> Option<Vec<u8>> {
+        let session = self.session.as_mut()?;
+        if !session.is_ready() {
+            return None;
+        }
+
+        session.decrypt(user_id, MediaType::AUDIO, packet).ok()
     }
 
     pub(crate) fn take_pending_outbound(&mut self) -> Option<DaveOutboundMessage> {

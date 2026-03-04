@@ -1,6 +1,6 @@
 use super::{
     message::*,
-    ws_dave::{self, DaveState},
+    ws_dave::{self, SharedDaveState},
 };
 use crate::{
     events::CoreContext,
@@ -42,7 +42,7 @@ pub(crate) struct AuxNetwork {
     #[cfg(feature = "receive")]
     ssrc_signalling: Arc<SsrcTracker>,
 
-    dave_state: DaveState,
+    dave_state: SharedDaveState,
 }
 
 impl AuxNetwork {
@@ -53,6 +53,7 @@ impl AuxNetwork {
         heartbeat_interval: f64,
         attempt_idx: usize,
         info: ConnectionInfo,
+        dave_state: SharedDaveState,
         #[cfg(feature = "receive")] ssrc_signalling: Arc<SsrcTracker>,
     ) -> Self {
         Self {
@@ -72,7 +73,7 @@ impl AuxNetwork {
             #[cfg(feature = "receive")]
             ssrc_signalling,
 
-            dave_state: DaveState::default(),
+            dave_state,
         }
     }
 
@@ -232,15 +233,22 @@ impl AuxNetwork {
     async fn flush_dave_outbound(&mut self) -> Result<(), WsError> {
         #[cfg(feature = "dave-e2ee")]
         {
-            if let Some(payload) = self.dave_state.take_pending_key_package() {
-                let sequence = self
-                    .dave_state
-                    .last_binary_sequence
-                    .unwrap_or(0)
-                    .wrapping_add(1);
+            let maybe_payload = {
+                let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                dave.take_pending_key_package()
+            };
+
+            if let Some(payload) = maybe_payload {
+                let sequence = {
+                    let dave = self.dave_state.lock().expect("dave mutex poisoned");
+                    dave.last_binary_sequence.unwrap_or(0).wrapping_add(1)
+                };
                 let frame = ws_dave::encode_client_binary_packet(sequence, 26, payload.as_ref());
                 self.ws_client.send_binary(frame).await?;
-                self.dave_state.last_binary_sequence = Some(sequence);
+                {
+                    let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                    dave.last_binary_sequence = Some(sequence);
+                }
                 trace!(
                     sequence,
                     payload_len = payload.len(),
@@ -249,22 +257,32 @@ impl AuxNetwork {
             }
         }
 
-        while let Some(outbound) = self.dave_state.take_pending_outbound() {
+        loop {
+            let outbound = {
+                let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                dave.take_pending_outbound()
+            };
+            let Some(outbound) = outbound else {
+                break;
+            };
+
             match outbound {
                 ws_dave::DaveOutboundMessage::Json { op, data } => {
                     self.ws_client.send_json_opcode(op, &data).await?;
                     trace!(op, data = %data, "Sent DAVE JSON gateway message");
                 },
                 ws_dave::DaveOutboundMessage::Binary { opcode, payload } => {
-                    let sequence = self
-                        .dave_state
-                        .last_binary_sequence
-                        .unwrap_or(0)
-                        .wrapping_add(1);
+                    let sequence = {
+                        let dave = self.dave_state.lock().expect("dave mutex poisoned");
+                        dave.last_binary_sequence.unwrap_or(0).wrapping_add(1)
+                    };
                     let frame =
                         ws_dave::encode_client_binary_packet(sequence, opcode, payload.as_ref());
                     self.ws_client.send_binary(frame).await?;
-                    self.dave_state.last_binary_sequence = Some(sequence);
+                    {
+                        let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                        dave.last_binary_sequence = Some(sequence);
+                    }
                     trace!(
                         opcode,
                         sequence,
@@ -301,7 +319,10 @@ impl AuxNetwork {
     fn process_ws_binary(&mut self, _interconnect: &Interconnect, payload: bytes::Bytes) {
         match ws_dave::parse_binary_gateway_packet(&payload) {
             Some(pkt) => {
-                self.dave_state.on_binary_packet(&pkt);
+                {
+                    let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                    dave.on_binary_packet(&pkt);
+                }
                 match ws_dave::DaveBinaryOpcode::from_u8(pkt.opcode) {
                     Some(opcode) => {
                         trace!(
@@ -334,7 +355,10 @@ impl AuxNetwork {
         match op {
             21 => {
                 if let Some(msg) = ws_dave::parse_prepare_transition(&data) {
-                    self.dave_state.on_prepare_transition(msg);
+                    {
+                        let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                        dave.on_prepare_transition(msg);
+                    }
                     trace!(
                         transition_id = msg.transition_id,
                         protocol_version = msg.protocol_version,
@@ -346,7 +370,10 @@ impl AuxNetwork {
             },
             22 => {
                 if let Some(msg) = ws_dave::parse_execute_transition(&data) {
-                    self.dave_state.on_execute_transition(msg);
+                    {
+                        let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                        dave.on_execute_transition(msg);
+                    }
                     trace!(
                         transition_id = msg.transition_id,
                         "Processed DAVE execute transition"
@@ -363,7 +390,10 @@ impl AuxNetwork {
                         .channel_id
                         .map(|id| id.0.get())
                         .unwrap_or_else(|| self.info.guild_id.0.get());
-                    self.dave_state.on_prepare_epoch(msg, user_id, channel_id);
+                    {
+                        let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                        dave.on_prepare_epoch(msg, user_id, channel_id);
+                    }
                     trace!(
                         transition_id = msg.transition_id,
                         protocol_version = msg.protocol_version,
@@ -376,7 +406,10 @@ impl AuxNetwork {
             },
             31 => {
                 if let Some(msg) = ws_dave::parse_invalid_commit_welcome(&data) {
-                    self.dave_state.on_invalid_commit_welcome(msg);
+                    {
+                        let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                        dave.on_invalid_commit_welcome(msg);
+                    }
                     trace!(
                         transition_id = msg.transition_id,
                         "Processed DAVE invalid commit/welcome"

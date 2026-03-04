@@ -7,6 +7,7 @@ use super::{
     tasks::{
         message::*,
         ws::{self as ws_task, AuxNetwork},
+        ws_dave,
     },
     Config, CryptoMode,
 };
@@ -253,6 +254,8 @@ impl Connection {
         #[cfg(feature = "receive")]
         let ssrc_tracker = Arc::new(SsrcTracker::default());
 
+        let dave_state = ws_dave::new_shared_state();
+
         let ws_state = AuxNetwork::new(
             ws_msg_rx,
             client,
@@ -260,6 +263,7 @@ impl Connection {
             hello.heartbeat_interval,
             idx,
             info.clone(),
+            dave_state.clone(),
             #[cfg(feature = "receive")]
             ssrc_tracker.clone(),
         );
@@ -275,6 +279,7 @@ impl Connection {
             config.clone(),
             udp_rx,
             ssrc_tracker,
+            dave_state,
         ));
 
         Ok(Connection {
