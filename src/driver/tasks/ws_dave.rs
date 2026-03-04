@@ -182,28 +182,37 @@ impl DaveState {
                             };
                             let proposals = &packet.payload[1..];
 
-                            if let Ok(result) =
-                                session.process_proposals(operation_type, proposals, None)
-                            {
-                                if let Some(commit_welcome) = result {
-                                    let mut out = Vec::with_capacity(
-                                        commit_welcome.commit.len()
-                                            + commit_welcome
-                                                .welcome
-                                                .as_ref()
-                                                .map_or(0, |w| w.len()),
-                                    );
-                                    out.extend_from_slice(&commit_welcome.commit);
-                                    if let Some(welcome) = commit_welcome.welcome {
-                                        out.extend_from_slice(&welcome);
-                                    }
+                            match session.process_proposals(operation_type, proposals, None) {
+                                Ok(result) => {
+                                    if let Some(commit_welcome) = result {
+                                        let mut out = Vec::with_capacity(
+                                            commit_welcome.commit.len()
+                                                + commit_welcome
+                                                    .welcome
+                                                    .as_ref()
+                                                    .map_or(0, |w| w.len()),
+                                        );
+                                        out.extend_from_slice(&commit_welcome.commit);
+                                        if let Some(welcome) = commit_welcome.welcome {
+                                            out.extend_from_slice(&welcome);
+                                        }
 
-                                    self.pending_outbound
-                                        .push_back(DaveOutboundMessage::Binary {
-                                            opcode: 28,
-                                            payload: Bytes::from(out),
+                                        self.pending_outbound.push_back(
+                                            DaveOutboundMessage::Binary {
+                                                opcode: 28,
+                                                payload: Bytes::from(out),
+                                            },
+                                        );
+                                    }
+                                },
+                                Err(_) => {
+                                    if let Some(transition_id) = self.transition_id {
+                                        self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                                            op: 31,
+                                            data: serde_json::json!({ "transition_id": transition_id }),
                                         });
-                                }
+                                    }
+                                },
                             }
                         },
                         DaveBinaryOpcode::MlsAnnounceCommitTransition => {
@@ -279,6 +288,20 @@ pub(crate) fn encode_binary_gateway_packet(sequence: u16, opcode: u8, payload: &
     out.push(opcode);
     out.extend_from_slice(payload);
     Bytes::from(out)
+}
+
+/// Client->gateway binary framing differs by opcode in DAVE:
+/// - 26 (key_package) and 28 (commit_welcome) are sent without sequence prefix.
+/// - sequence-prefixed framing is retained for other opcodes for forward compatibility.
+pub(crate) fn encode_client_binary_packet(sequence: u16, opcode: u8, payload: &[u8]) -> Bytes {
+    if opcode == 26 || opcode == 28 {
+        let mut out = Vec::with_capacity(1 + payload.len());
+        out.push(opcode);
+        out.extend_from_slice(payload);
+        Bytes::from(out)
+    } else {
+        encode_binary_gateway_packet(sequence, opcode, payload)
+    }
 }
 
 pub(crate) fn parse_binary_gateway_packet(buf: &[u8]) -> Option<BinaryGatewayPacket> {

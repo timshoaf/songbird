@@ -238,7 +238,7 @@ impl AuxNetwork {
                     .last_binary_sequence
                     .unwrap_or(0)
                     .wrapping_add(1);
-                let frame = ws_dave::encode_binary_gateway_packet(sequence, 26, payload.as_ref());
+                let frame = ws_dave::encode_client_binary_packet(sequence, 26, payload.as_ref());
                 self.ws_client.send_binary(frame).await?;
                 self.dave_state.last_binary_sequence = Some(sequence);
                 trace!(
@@ -262,7 +262,7 @@ impl AuxNetwork {
                         .unwrap_or(0)
                         .wrapping_add(1);
                     let frame =
-                        ws_dave::encode_binary_gateway_packet(sequence, opcode, payload.as_ref());
+                        ws_dave::encode_client_binary_packet(sequence, opcode, payload.as_ref());
                     self.ws_client.send_binary(frame).await?;
                     self.dave_state.last_binary_sequence = Some(sequence);
                     trace!(
