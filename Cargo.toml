@@ -4,7 +4,7 @@ description = "An async Rust library for the Discord voice API."
 documentation = "https://docs.rs/songbird"
 edition = "2021"
 homepage = "https://github.com/serenity-rs/songbird"
-include = ["src/**/*.rs", "Cargo.toml", "build.rs", "vendor/serenity-voice-model/**"]
+include = ["src/**/*.rs", "Cargo.toml", "build.rs"]
 keywords = ["discord", "api", "rtp", "audio"]
 license = "ISC"
 name = "songbird"
@@ -50,7 +50,7 @@ serenity = { default-features = false, optional = true, version = "0.12.0", feat
     "voice",
     "gateway",
 ] }
-serenity-voice-model = { optional = true, path = "vendor/serenity-voice-model", package = "serenity-voice-model" }
+serenity-voice-model = { optional = true, version = "0.2" }
 socket2 = { optional = true, version = "0.5" }
 streamcatcher = { optional = true, version = "1" }
 stream_lib = { default-features = false, optional = true, version = "0.5.2" }
