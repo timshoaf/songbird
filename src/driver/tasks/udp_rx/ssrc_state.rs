@@ -110,12 +110,8 @@ impl SsrcState {
                 );
             }
 
-            let (audio, _packet_size) = self.scan_and_decode(
-                encoded_payload,
-                extensions,
-                missed_packets,
-                should_decode && decrypted,
-            )?;
+            let (audio, _packet_size) =
+                self.scan_and_decode(encoded_payload, extensions, missed_packets, should_decode)?;
 
             let rtp_data = RtpData {
                 packet,
