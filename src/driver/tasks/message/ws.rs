@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use bytes::Bytes;
+use serde_json::Value;
 
 use super::Interconnect;
 use crate::{model::Event as GatewayEvent, ws::WsStream};
@@ -12,4 +13,5 @@ pub enum WsMessage {
     Speaking(bool),
     Deliver(GatewayEvent),
     DeliverBinary(Bytes),
+    DeliverUnknownJson { op: u8, data: Value },
 }

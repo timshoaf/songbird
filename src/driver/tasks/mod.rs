@@ -8,6 +8,7 @@ pub mod mixer;
 #[cfg(feature = "receive")]
 pub(crate) mod udp_rx;
 pub(crate) mod ws;
+pub(crate) mod ws_dave;
 
 use std::time::Duration;
 
@@ -18,8 +19,7 @@ use crate::{
         internal_data::{InternalConnect, InternalDisconnect},
         CoreContext,
     },
-    Config,
-    ConnectionInfo,
+    Config, ConnectionInfo,
 };
 use flume::{Receiver, Sender};
 use message::*;
@@ -205,14 +205,15 @@ async fn runner(mut config: Config, rx: Receiver<CoreMessage>, tx: Sender<CoreMe
                     }
                 }
             },
-            CoreMessage::FullReconnect =>
+            CoreMessage::FullReconnect => {
                 if let Some(conn) = connection.take() {
                     let info = conn.info.clone();
 
                     connection = ConnectionRetryData::reconnect(info, &mut attempt_idx)
                         .attempt(&mut retrying, &interconnect, &config)
                         .await;
-                },
+                }
+            },
             CoreMessage::RebuildInterconnect => {
                 interconnect.restart_volatile_internals();
             },

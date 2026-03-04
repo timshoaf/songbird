@@ -2,6 +2,8 @@ use crate::{error::JsonError, model::Event};
 
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt, TryStreamExt};
+use serde::Serialize;
+use serde_json::Value;
 use tokio::{
     net::TcpStream,
     time::{timeout, Duration},
@@ -27,6 +29,7 @@ pub struct WsStream(WebSocketStream<MaybeTlsStream<TcpStream>>);
 #[derive(Clone, Debug)]
 pub enum GatewayMessage {
     Json(Event),
+    UnknownJson { op: u8, data: Value },
     Binary(Bytes),
 }
 
@@ -75,6 +78,16 @@ impl WsStream {
         let res = crate::json::to_string(value);
         let res = res.map(Message::text);
         Ok(res.map_err(Error::from).map(|m| self.0.send(m))?.await?)
+    }
+
+    pub(crate) async fn send_json_opcode<T: Serialize>(&mut self, op: u8, data: &T) -> Result<()> {
+        let body = serde_json::json!({ "op": op, "d": data });
+        let txt = crate::json::to_string(&body)?;
+        Ok(self.0.send(Message::text(txt)).await?)
+    }
+
+    pub(crate) async fn send_binary(&mut self, payload: Bytes) -> Result<()> {
+        Ok(self.0.send(Message::binary(payload)).await?)
     }
 }
 
@@ -148,11 +161,24 @@ pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Gate
         _ => return Ok(None),
     };
 
-    Ok(serde_json::from_str(text)
-        .map_err(|e| {
-            debug!("Unexpected JSON: {e}. Payload: {text}");
-            e
-        })
-        .ok()
-        .map(GatewayMessage::Json))
+    if let Ok(evt) = serde_json::from_str::<Event>(text) {
+        return Ok(Some(GatewayMessage::Json(evt)));
+    }
+
+    let value = serde_json::from_str::<Value>(text).map_err(|e| {
+        debug!("Unexpected JSON: {e}. Payload: {text}");
+        e
+    })?;
+
+    let Some(op) = value
+        .get("op")
+        .and_then(Value::as_u64)
+        .and_then(|v| u8::try_from(v).ok())
+    else {
+        debug!("Voice gateway JSON missing valid opcode: {value}");
+        return Ok(None);
+    };
+    let data = value.get("d").cloned().unwrap_or(Value::Null);
+
+    Ok(Some(GatewayMessage::UnknownJson { op, data }))
 }

@@ -10,6 +10,7 @@ use crate::{
 };
 use flume::Receiver;
 use rand::{distr::Uniform, Rng};
+use serde_json::Value;
 #[cfg(feature = "receive")]
 use std::sync::Arc;
 use std::time::Duration;
@@ -102,6 +103,10 @@ impl AuxNetwork {
                             self.process_ws(interconnect, msg);
                             false
                         },
+                        Ok(Some(crate::ws::GatewayMessage::UnknownJson { op, data })) => {
+                            self.process_ws_unknown_json(interconnect, op, data);
+                            false
+                        },
                         Ok(Some(crate::ws::GatewayMessage::Binary(msg))) => {
                             self.process_ws_binary(interconnect, msg);
                             false
@@ -153,6 +158,9 @@ impl AuxNetwork {
                         Ok(WsMessage::DeliverBinary(msg)) => {
                             self.process_ws_binary(interconnect, msg);
                         },
+                        Ok(WsMessage::DeliverUnknownJson { op, data }) => {
+                            self.process_ws_unknown_json(interconnect, op, data);
+                        },
                         Err(flume::RecvError::Disconnected) => {
                             break;
                         },
@@ -202,10 +210,33 @@ impl AuxNetwork {
     }
 
     fn process_ws_binary(&mut self, _interconnect: &Interconnect, payload: bytes::Bytes) {
-        // DAVE/MLS voice gateway events use binary payload framing.
-        // Infra support is present here to keep the WS alive and allow future
-        // driver integration to decode and handle opcodes 25-30.
-        trace!(len = payload.len(), "Received binary voice gateway payload");
+        match crate::driver::tasks::ws_dave::parse_binary_gateway_packet(&payload) {
+            Some(pkt) => {
+                trace!(
+                    opcode = pkt.opcode,
+                    sequence = pkt.sequence,
+                    payload_len = pkt.payload.len(),
+                    "Received binary voice gateway payload"
+                );
+            },
+            None => {
+                trace!(
+                    len = payload.len(),
+                    "Received malformed binary voice gateway payload"
+                );
+            },
+        }
+    }
+
+    fn process_ws_unknown_json(&mut self, _interconnect: &Interconnect, op: u8, data: Value) {
+        match op {
+            21 | 22 | 24 | 31 => {
+                trace!(op, data = %data, "Received DAVE-related voice gateway opcode");
+            },
+            _ => {
+                trace!(op, data = %data, "Received unknown voice gateway JSON opcode");
+            },
+        }
     }
 
     fn process_ws(&mut self, interconnect: &Interconnect, value: GatewayEvent) {

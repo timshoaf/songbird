@@ -98,6 +98,10 @@ impl Connection {
                     debug!("Expected ready/hello; got: {:?}", other);
                     ws_msg_tx.send(WsMessage::Deliver(other))?;
                 },
+                crate::ws::GatewayMessage::UnknownJson { op, data } => {
+                    debug!("Expected ready/hello; got unknown json op={}", op);
+                    ws_msg_tx.send(WsMessage::DeliverUnknownJson { op, data })?;
+                },
                 crate::ws::GatewayMessage::Binary(other) => {
                     debug!(
                         "Expected ready/hello json; got binary payload len={}",
@@ -315,6 +319,9 @@ impl Connection {
                 crate::ws::GatewayMessage::Json(other) => {
                     self.ws.send(WsMessage::Deliver(other))?;
                 },
+                crate::ws::GatewayMessage::UnknownJson { op, data } => {
+                    self.ws.send(WsMessage::DeliverUnknownJson { op, data })?;
+                },
                 crate::ws::GatewayMessage::Binary(other) => {
                     self.ws.send(WsMessage::DeliverBinary(other))?;
                 },
@@ -368,6 +375,9 @@ async fn init_cipher(
                 // Discord can and will send user-specific payload packets during this time
                 // which are needed to map SSRCs to `UserId`s.
                 tx.send(WsMessage::Deliver(other))?;
+            },
+            crate::ws::GatewayMessage::UnknownJson { op, data } => {
+                tx.send(WsMessage::DeliverUnknownJson { op, data })?;
             },
             crate::ws::GatewayMessage::Binary(other) => {
                 tx.send(WsMessage::DeliverBinary(other))?;
