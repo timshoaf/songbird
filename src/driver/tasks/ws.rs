@@ -357,12 +357,12 @@ impl AuxNetwork {
             },
             24 => {
                 if let Some(msg) = ws_dave::parse_prepare_epoch(&data) {
-                    let user_id: u64 = self.info.user_id.into();
+                    let user_id: u64 = self.info.user_id.0.get();
                     let channel_id: u64 = self
                         .info
                         .channel_id
-                        .map(Into::into)
-                        .unwrap_or_else(|| self.info.guild_id.into());
+                        .map(|id| id.0.get())
+                        .unwrap_or_else(|| self.info.guild_id.0.get());
                     self.dave_state.on_prepare_epoch(msg, user_id, channel_id);
                     trace!(
                         transition_id = msg.transition_id,

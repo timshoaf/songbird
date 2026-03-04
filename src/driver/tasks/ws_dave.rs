@@ -44,7 +44,7 @@ pub(crate) enum DaveOutboundMessage {
     Binary { opcode: u8, payload: Bytes },
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub(crate) struct DaveState {
     pub(crate) protocol_version: Option<u16>,
     pub(crate) epoch: Option<u64>,

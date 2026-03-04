@@ -361,7 +361,7 @@ async fn init_cipher(
             continue;
         };
 
-        match value {
+        match message {
             GatewayEvent::SessionDescription(desc) => {
                 if desc.mode != mode.to_request_str() {
                     return Err(Error::CryptoModeInvalid);
