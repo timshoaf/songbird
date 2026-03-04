@@ -198,21 +198,42 @@ impl UdpRx {
                     if payload.len() >= rtp_body_start + rtp_body_tail {
                         let encrypted_slice =
                             &payload[rtp_body_start..payload.len() - rtp_body_tail];
-                        let decrypted_payload = {
+                        let (dave_ready, decrypted_payload) = {
                             let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
-                            dave.decrypt_opus_for_user(user_id, encrypted_slice)
+                            let ready = dave.dave_ready();
+                            let out = dave.decrypt_opus_for_user(user_id, encrypted_slice);
+                            (ready, out)
                         };
 
-                        if let Some(plain) = decrypted_payload {
-                            let payload_len = payload.len();
-                            if rtp_body_start + plain.len() <= payload_len {
-                                if let Some(payload_mut) = rtp.payload_mut() {
-                                    payload_mut[rtp_body_start..rtp_body_start + plain.len()]
-                                        .copy_from_slice(&plain);
-                                    rtp_body_tail = payload_len - (rtp_body_start + plain.len());
-                                    decrypted = true;
+                        match decrypted_payload {
+                            Some(plain) => {
+                                let payload_len = payload.len();
+                                if rtp_body_start + plain.len() <= payload_len {
+                                    if let Some(payload_mut) = rtp.payload_mut() {
+                                        payload_mut[rtp_body_start..rtp_body_start + plain.len()]
+                                            .copy_from_slice(&plain);
+                                        rtp_body_tail =
+                                            payload_len - (rtp_body_start + plain.len());
+                                        decrypted = true;
+                                        tracing::debug!(
+                                            user_id,
+                                            ssrc = rtp.get_ssrc(),
+                                            in_len = encrypted_slice.len(),
+                                            out_len = plain.len(),
+                                            "DAVE inbound decrypt success"
+                                        );
+                                    }
                                 }
-                            }
+                            },
+                            None => {
+                                tracing::debug!(
+                                    user_id,
+                                    ssrc = rtp.get_ssrc(),
+                                    dave_ready,
+                                    payload_len = encrypted_slice.len(),
+                                    "DAVE inbound decrypt not applied"
+                                );
+                            },
                         }
                     }
                 }

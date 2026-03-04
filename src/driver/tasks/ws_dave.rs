@@ -343,6 +343,11 @@ impl DaveState {
     }
 
     #[cfg(feature = "dave-e2ee")]
+    pub(crate) fn dave_ready(&self) -> bool {
+        self.session.as_ref().map(|s| s.is_ready()).unwrap_or(false)
+    }
+
+    #[cfg(feature = "dave-e2ee")]
     pub(crate) fn encrypt_opus_for_self(&mut self, packet: &[u8]) -> Option<Vec<u8>> {
         let session = self.session.as_mut()?;
         if !session.is_ready() {

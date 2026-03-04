@@ -49,7 +49,7 @@ use symphonia_core::{
     units::Time,
 };
 use tokio::runtime::Handle;
-use tracing::error;
+use tracing::{debug, error};
 
 #[cfg(test)]
 use crate::driver::test_config::{OutputMessage, OutputMode};
@@ -654,18 +654,34 @@ impl Mixer {
         #[cfg(feature = "dave-e2ee")]
         {
             let plain = payload[first_payload_byte..first_payload_byte + payload_len].to_vec();
-            let encrypted = {
+            let (dave_ready, encrypted) = {
                 let mut dave = conn.dave_state.lock().expect("dave mutex poisoned");
-                dave.encrypt_opus_for_self(&plain)
+                let ready = dave.dave_ready();
+                let out = dave.encrypt_opus_for_self(&plain);
+                (ready, out)
             };
 
-            if let Some(encrypted) = encrypted {
-                let total_payload_space = payload.len() - crypto_mode.payload_suffix_len();
-                let out_slice = &mut payload[first_payload_byte..total_payload_space];
-                if encrypted.len() <= out_slice.len() {
-                    out_slice[..encrypted.len()].copy_from_slice(&encrypted);
-                    payload_len = encrypted.len();
-                }
+            match encrypted {
+                Some(encrypted) => {
+                    let total_payload_space = payload.len() - crypto_mode.payload_suffix_len();
+                    let out_slice = &mut payload[first_payload_byte..total_payload_space];
+                    if encrypted.len() <= out_slice.len() {
+                        out_slice[..encrypted.len()].copy_from_slice(&encrypted);
+                        payload_len = encrypted.len();
+                        tracing::debug!(
+                            in_len = plain.len(),
+                            out_len = payload_len,
+                            "DAVE outbound encrypt success"
+                        );
+                    }
+                },
+                None => {
+                    tracing::debug!(
+                        dave_ready,
+                        payload_len = plain.len(),
+                        "DAVE outbound encrypt not applied"
+                    );
+                },
             }
         }
 
