@@ -362,7 +362,7 @@ async fn init_cipher(
         };
 
         match message {
-            GatewayEvent::SessionDescription(desc) => {
+            crate::ws::GatewayMessage::Json(GatewayEvent::SessionDescription(desc)) => {
                 if desc.mode != mode.to_request_str() {
                     return Err(Error::CryptoModeInvalid);
                 }
