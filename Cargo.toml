@@ -23,6 +23,7 @@ bytes = { optional = true, version = "1" }
 chacha20poly1305 = { optional = true, version = "0.10.1" }
 crypto-common = { optional = true, features = ["std"], version = "0.1" }
 dashmap = { optional = true, version = "6.1.0" }
+davey = { optional = true, version = "0.1.2" }
 derivative = "2"
 discortp = { default-features = false, features = [
     "discord",
@@ -154,6 +155,7 @@ twilight = ["dep:twilight-gateway", "dep:twilight-model"]
 # Behaviour altering features.
 builtin-queue = []
 receive = ["dep:bytes", "discortp?/demux", "discortp?/rtcp"]
+dave-e2ee = ["dep:davey"]
 
 # Used for docgen/testing/benchmarking.
 full-doc = ["default", "tungstenite", "twilight", "builtin-queue", "receive"]

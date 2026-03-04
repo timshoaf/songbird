@@ -108,15 +108,33 @@ impl AuxNetwork {
                         },
                         Ok(Some(crate::ws::GatewayMessage::Json(msg))) => {
                             self.process_ws(interconnect, msg);
-                            false
+                            if let Err(e) = self.flush_dave_outbound().await {
+                                should_reconnect = ws_error_is_not_final(&e);
+                                ws_reason = Some((&e).into());
+                                true
+                            } else {
+                                false
+                            }
                         },
                         Ok(Some(crate::ws::GatewayMessage::UnknownJson { op, data })) => {
                             self.process_ws_unknown_json(interconnect, op, data);
-                            false
+                            if let Err(e) = self.flush_dave_outbound().await {
+                                should_reconnect = ws_error_is_not_final(&e);
+                                ws_reason = Some((&e).into());
+                                true
+                            } else {
+                                false
+                            }
                         },
                         Ok(Some(crate::ws::GatewayMessage::Binary(msg))) => {
                             self.process_ws_binary(interconnect, msg);
-                            false
+                            if let Err(e) = self.flush_dave_outbound().await {
+                                should_reconnect = ws_error_is_not_final(&e);
+                                ws_reason = Some((&e).into());
+                                true
+                            } else {
+                                false
+                            }
                         },
                         _ => false,
                     };
@@ -161,12 +179,27 @@ impl AuxNetwork {
                         },
                         Ok(WsMessage::Deliver(msg)) => {
                             self.process_ws(interconnect, msg);
+                            if let Err(e) = self.flush_dave_outbound().await {
+                                ws_error = true;
+                                should_reconnect = ws_error_is_not_final(&e);
+                                ws_reason = Some((&e).into());
+                            }
                         },
                         Ok(WsMessage::DeliverBinary(msg)) => {
                             self.process_ws_binary(interconnect, msg);
+                            if let Err(e) = self.flush_dave_outbound().await {
+                                ws_error = true;
+                                should_reconnect = ws_error_is_not_final(&e);
+                                ws_reason = Some((&e).into());
+                            }
                         },
                         Ok(WsMessage::DeliverUnknownJson { op, data }) => {
                             self.process_ws_unknown_json(interconnect, op, data);
+                            if let Err(e) = self.flush_dave_outbound().await {
+                                ws_error = true;
+                                should_reconnect = ws_error_is_not_final(&e);
+                                ws_reason = Some((&e).into());
+                            }
                         },
                         Err(flume::RecvError::Disconnected) => {
                             break;
@@ -194,6 +227,29 @@ impl AuxNetwork {
 
     fn next_heartbeat(&self) -> Instant {
         Instant::now() + self.heartbeat_interval
+    }
+
+    async fn flush_dave_outbound(&mut self) -> Result<(), WsError> {
+        #[cfg(feature = "dave-e2ee")]
+        {
+            if let Some(payload) = self.dave_state.take_pending_key_package() {
+                let sequence = self
+                    .dave_state
+                    .last_binary_sequence
+                    .unwrap_or(0)
+                    .wrapping_add(1);
+                let frame = ws_dave::encode_binary_gateway_packet(sequence, 26, payload.as_ref());
+                self.ws_client.send_binary(frame).await?;
+                self.dave_state.last_binary_sequence = Some(sequence);
+                trace!(
+                    sequence,
+                    payload_len = payload.len(),
+                    "Sent DAVE MLS key package"
+                );
+            }
+        }
+
+        Ok(())
     }
 
     async fn send_heartbeat(&mut self) -> Result<(), WsError> {
@@ -275,7 +331,13 @@ impl AuxNetwork {
             },
             24 => {
                 if let Some(msg) = ws_dave::parse_prepare_epoch(&data) {
-                    self.dave_state.on_prepare_epoch(msg);
+                    let user_id: u64 = self.info.user_id.into();
+                    let channel_id: u64 = self
+                        .info
+                        .channel_id
+                        .map(Into::into)
+                        .unwrap_or_else(|| self.info.guild_id.into());
+                    self.dave_state.on_prepare_epoch(msg, user_id, channel_id);
                     trace!(
                         transition_id = msg.transition_id,
                         protocol_version = msg.protocol_version,

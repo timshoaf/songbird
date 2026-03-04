@@ -1,6 +1,10 @@
 use bytes::Bytes;
+#[cfg(feature = "dave-e2ee")]
+use davey::{DaveSession, DAVE_PROTOCOL_VERSION};
 use serde::Deserialize;
 use serde_json::Value;
+#[cfg(feature = "dave-e2ee")]
+use std::num::NonZeroU16;
 
 #[derive(Clone, Debug)]
 pub(crate) struct BinaryGatewayPacket {
@@ -40,6 +44,11 @@ pub(crate) struct DaveState {
     pub(crate) transition_id: Option<u32>,
     pub(crate) awaiting_transition_execute: bool,
     pub(crate) last_binary_sequence: Option<u16>,
+
+    #[cfg(feature = "dave-e2ee")]
+    session: Option<DaveSession>,
+    #[cfg(feature = "dave-e2ee")]
+    pending_key_package: Option<Bytes>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -78,10 +87,48 @@ impl DaveState {
         }
     }
 
-    pub(crate) fn on_prepare_epoch(&mut self, msg: DavePrepareEpoch) {
+    pub(crate) fn on_prepare_epoch(
+        &mut self,
+        msg: DavePrepareEpoch,
+        user_id: u64,
+        channel_id: u64,
+    ) {
         self.transition_id = Some(msg.transition_id);
         self.protocol_version = Some(msg.protocol_version);
         self.epoch = Some(msg.epoch);
+
+        #[cfg(feature = "dave-e2ee")]
+        {
+            // Protocol version 0 means transport-only mode; no DAVE session needed.
+            if msg.protocol_version == 0 {
+                self.session = None;
+                self.pending_key_package = None;
+                return;
+            }
+
+            let protocol = NonZeroU16::new(msg.protocol_version)
+                .or_else(|| NonZeroU16::new(DAVE_PROTOCOL_VERSION))
+                .expect("DAVE protocol version constant must be non-zero");
+
+            let mut session = DaveSession::new(protocol, user_id, channel_id, None)
+                .or_else(|_| {
+                    DaveSession::new(
+                        NonZeroU16::new(DAVE_PROTOCOL_VERSION).expect("non-zero"),
+                        user_id,
+                        channel_id,
+                        None,
+                    )
+                })
+                .ok();
+
+            if let Some(ref mut session) = session {
+                if let Ok(key_package) = session.create_key_package() {
+                    self.pending_key_package = Some(Bytes::from(key_package));
+                }
+            }
+
+            self.session = session;
+        }
     }
 
     pub(crate) fn on_invalid_commit_welcome(&mut self, msg: DaveInvalidCommitWelcome) {
@@ -92,6 +139,38 @@ impl DaveState {
 
     pub(crate) fn on_binary_packet(&mut self, packet: &BinaryGatewayPacket) {
         self.last_binary_sequence = Some(packet.sequence);
+
+        #[cfg(feature = "dave-e2ee")]
+        {
+            if let Some(op) = DaveBinaryOpcode::from_u8(packet.opcode) {
+                if let Some(session) = self.session.as_mut() {
+                    match op {
+                        DaveBinaryOpcode::MlsExternalSender => {
+                            let _ = session.set_external_sender(&packet.payload);
+                            if let Ok(key_package) = session.create_key_package() {
+                                self.pending_key_package = Some(Bytes::from(key_package));
+                            }
+                        },
+                        DaveBinaryOpcode::MlsAnnounceCommitTransition => {
+                            let _ = session.process_commit(&packet.payload);
+                        },
+                        DaveBinaryOpcode::MlsWelcome => {
+                            let _ = session.process_welcome(&packet.payload);
+                        },
+                        DaveBinaryOpcode::MlsProposals
+                        | DaveBinaryOpcode::MlsCommitWelcome
+                        | DaveBinaryOpcode::MlsKeyPackage => {
+                            // Wiring point for proposal/commit-welcome handling.
+                        },
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "dave-e2ee")]
+    pub(crate) fn take_pending_key_package(&mut self) -> Option<Bytes> {
+        self.pending_key_package.take()
     }
 }
 
@@ -99,6 +178,14 @@ impl DaveState {
 /// - u16 sequence (big-endian)
 /// - u8 opcode
 /// - remaining bytes = payload
+pub(crate) fn encode_binary_gateway_packet(sequence: u16, opcode: u8, payload: &[u8]) -> Bytes {
+    let mut out = Vec::with_capacity(3 + payload.len());
+    out.extend_from_slice(&sequence.to_be_bytes());
+    out.push(opcode);
+    out.extend_from_slice(payload);
+    Bytes::from(out)
+}
+
 pub(crate) fn parse_binary_gateway_packet(buf: &[u8]) -> Option<BinaryGatewayPacket> {
     if buf.len() < 3 {
         return None;
