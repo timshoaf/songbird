@@ -213,16 +213,17 @@ impl DaveState {
                             }
                         },
                         DaveBinaryOpcode::MlsProposals => {
-                            if packet.payload.is_empty() {
+                            let Some((operation_type, proposals)) =
+                                decode_proposals_payload(&packet.payload)
+                            else {
                                 return;
-                            }
+                            };
 
-                            let operation_type = if packet.payload[0] == 0 {
+                            let operation_type = if operation_type == 0 {
                                 ProposalsOperationType::APPEND
                             } else {
                                 ProposalsOperationType::REVOKE
                             };
-                            let proposals = &packet.payload[1..];
 
                             match session.process_proposals(operation_type, proposals, None) {
                                 Ok(result) => {
@@ -258,12 +259,12 @@ impl DaveState {
                             }
                         },
                         DaveBinaryOpcode::MlsAnnounceCommitTransition => {
-                            if packet.payload.len() < 2 {
+                            let Some((transition_id, commit)) =
+                                decode_transition_payload(&packet.payload)
+                            else {
                                 return;
-                            }
-                            let transition_id =
-                                u16::from_be_bytes([packet.payload[0], packet.payload[1]]) as u32;
-                            let commit = &packet.payload[2..];
+                            };
+                            let transition_id = transition_id as u32;
                             if self.transition_id != Some(transition_id) {
                                 self.pending_outbound.push_back(DaveOutboundMessage::Json {
                                     op: 31,
@@ -288,12 +289,12 @@ impl DaveState {
                             }
                         },
                         DaveBinaryOpcode::MlsWelcome => {
-                            if packet.payload.len() < 2 {
+                            let Some((transition_id, welcome)) =
+                                decode_transition_payload(&packet.payload)
+                            else {
                                 return;
-                            }
-                            let transition_id =
-                                u16::from_be_bytes([packet.payload[0], packet.payload[1]]) as u32;
-                            let welcome = &packet.payload[2..];
+                            };
+                            let transition_id = transition_id as u32;
                             if self.transition_id != Some(transition_id) {
                                 self.pending_outbound.push_back(DaveOutboundMessage::Json {
                                     op: 31,
@@ -385,6 +386,37 @@ pub(crate) fn encode_client_binary_packet(sequence: u16, opcode: u8, payload: &[
     }
 }
 
+pub(crate) fn encode_proposals_payload(operation_type: u8, proposals: &[u8]) -> Bytes {
+    let mut out = Vec::with_capacity(1 + proposals.len());
+    out.push(operation_type);
+    out.extend_from_slice(proposals);
+    Bytes::from(out)
+}
+
+pub(crate) fn decode_proposals_payload(payload: &[u8]) -> Option<(u8, &[u8])> {
+    if payload.is_empty() {
+        None
+    } else {
+        Some((payload[0], &payload[1..]))
+    }
+}
+
+pub(crate) fn encode_transition_payload(transition_id: u16, body: &[u8]) -> Bytes {
+    let mut out = Vec::with_capacity(2 + body.len());
+    out.extend_from_slice(&transition_id.to_be_bytes());
+    out.extend_from_slice(body);
+    Bytes::from(out)
+}
+
+pub(crate) fn decode_transition_payload(payload: &[u8]) -> Option<(u16, &[u8])> {
+    if payload.len() < 2 {
+        None
+    } else {
+        let transition_id = u16::from_be_bytes([payload[0], payload[1]]);
+        Some((transition_id, &payload[2..]))
+    }
+}
+
 pub(crate) fn parse_binary_gateway_packet(buf: &[u8]) -> Option<BinaryGatewayPacket> {
     if buf.len() < 3 {
         return None;
@@ -415,4 +447,50 @@ pub(crate) fn parse_prepare_epoch(data: &Value) -> Option<DavePrepareEpoch> {
 
 pub(crate) fn parse_invalid_commit_welcome(data: &Value) -> Option<DaveInvalidCommitWelcome> {
     serde_json::from_value(data.clone()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_packet_encoding_for_key_package_and_commit_welcome_has_no_sequence() {
+        let payload = [1u8, 2, 3, 4];
+        let key_pkg = encode_client_binary_packet(0x1234, 26, &payload);
+        assert_eq!(key_pkg.as_ref(), &[26, 1, 2, 3, 4]);
+
+        let commit_welcome = encode_client_binary_packet(0x5678, 28, &payload);
+        assert_eq!(commit_welcome.as_ref(), &[28, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn gateway_packet_encoding_for_other_opcodes_keeps_sequence() {
+        let payload = [9u8, 8, 7];
+        let out = encode_client_binary_packet(0x0102, 29, &payload);
+        assert_eq!(out.as_ref(), &[0x01, 0x02, 29, 9, 8, 7]);
+    }
+
+    #[test]
+    fn proposals_payload_roundtrip() {
+        let proposals = [0xAAu8, 0xBB, 0xCC];
+        let encoded = encode_proposals_payload(0, &proposals);
+        let decoded = decode_proposals_payload(&encoded).expect("decode proposals payload");
+        assert_eq!(decoded.0, 0);
+        assert_eq!(decoded.1, proposals);
+    }
+
+    #[test]
+    fn transition_payload_roundtrip() {
+        let body = [0xDEu8, 0xAD, 0xBE, 0xEF];
+        let encoded = encode_transition_payload(0x1234, &body);
+        let decoded = decode_transition_payload(&encoded).expect("decode transition payload");
+        assert_eq!(decoded.0, 0x1234);
+        assert_eq!(decoded.1, body);
+    }
+
+    #[test]
+    fn transition_decode_rejects_short_payload() {
+        assert!(decode_transition_payload(&[]).is_none());
+        assert!(decode_transition_payload(&[0x12]).is_none());
+    }
 }
