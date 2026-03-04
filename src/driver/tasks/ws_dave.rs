@@ -102,6 +102,7 @@ impl DaveState {
         user_id: u64,
         channel_id: u64,
     ) {
+        let previous_epoch = self.epoch;
         self.transition_id = Some(msg.transition_id);
         self.protocol_version = Some(msg.protocol_version);
         self.epoch = Some(msg.epoch);
@@ -137,6 +138,15 @@ impl DaveState {
             }
 
             self.session = session;
+        }
+
+        // If this protocol transition keeps the same epoch, there is no commit/welcome
+        // roundtrip and we can immediately signal readiness once local state is prepared.
+        if previous_epoch == Some(msg.epoch) {
+            self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                op: 23,
+                data: serde_json::json!({ "transition_id": msg.transition_id }),
+            });
         }
     }
 
