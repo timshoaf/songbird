@@ -1,8 +1,9 @@
 use bytes::Bytes;
 #[cfg(feature = "dave-e2ee")]
-use davey::{DaveSession, DAVE_PROTOCOL_VERSION};
+use davey::{DaveSession, ProposalsOperationType, DAVE_PROTOCOL_VERSION};
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::VecDeque;
 #[cfg(feature = "dave-e2ee")]
 use std::num::NonZeroU16;
 
@@ -37,6 +38,12 @@ impl DaveBinaryOpcode {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) enum DaveOutboundMessage {
+    Json { op: u8, data: Value },
+    Binary { opcode: u8, payload: Bytes },
+}
+
 #[derive(Clone, Debug, Default)]
 pub(crate) struct DaveState {
     pub(crate) protocol_version: Option<u16>,
@@ -49,6 +56,8 @@ pub(crate) struct DaveState {
     session: Option<DaveSession>,
     #[cfg(feature = "dave-e2ee")]
     pending_key_package: Option<Bytes>,
+
+    pending_outbound: VecDeque<DaveOutboundMessage>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -84,6 +93,10 @@ impl DaveState {
     pub(crate) fn on_execute_transition(&mut self, msg: DaveExecuteTransition) {
         if self.transition_id == Some(msg.transition_id) {
             self.awaiting_transition_execute = false;
+            self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                op: 23,
+                data: serde_json::json!({ "transition_id": msg.transition_id }),
+            });
         }
     }
 
@@ -151,16 +164,29 @@ impl DaveState {
                                 self.pending_key_package = Some(Bytes::from(key_package));
                             }
                         },
+                        DaveBinaryOpcode::MlsProposals => {
+                            if let Ok(result) = session.process_proposals(
+                                ProposalsOperationType::APPEND,
+                                &packet.payload,
+                                None,
+                            ) {
+                                if let Some(commit_welcome) = result {
+                                    self.pending_outbound
+                                        .push_back(DaveOutboundMessage::Binary {
+                                            opcode: 28,
+                                            payload: Bytes::from(commit_welcome.commit),
+                                        });
+                                }
+                            }
+                        },
                         DaveBinaryOpcode::MlsAnnounceCommitTransition => {
                             let _ = session.process_commit(&packet.payload);
                         },
                         DaveBinaryOpcode::MlsWelcome => {
                             let _ = session.process_welcome(&packet.payload);
                         },
-                        DaveBinaryOpcode::MlsProposals
-                        | DaveBinaryOpcode::MlsCommitWelcome
-                        | DaveBinaryOpcode::MlsKeyPackage => {
-                            // Wiring point for proposal/commit-welcome handling.
+                        DaveBinaryOpcode::MlsCommitWelcome | DaveBinaryOpcode::MlsKeyPackage => {
+                            // Outbound-only from client for normal flow.
                         },
                     }
                 }
@@ -171,6 +197,10 @@ impl DaveState {
     #[cfg(feature = "dave-e2ee")]
     pub(crate) fn take_pending_key_package(&mut self) -> Option<Bytes> {
         self.pending_key_package.take()
+    }
+
+    pub(crate) fn take_pending_outbound(&mut self) -> Option<DaveOutboundMessage> {
+        self.pending_outbound.pop_front()
     }
 }
 

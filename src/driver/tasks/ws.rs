@@ -249,6 +249,32 @@ impl AuxNetwork {
             }
         }
 
+        while let Some(outbound) = self.dave_state.take_pending_outbound() {
+            match outbound {
+                ws_dave::DaveOutboundMessage::Json { op, data } => {
+                    self.ws_client.send_json_opcode(op, &data).await?;
+                    trace!(op, data = %data, "Sent DAVE JSON gateway message");
+                },
+                ws_dave::DaveOutboundMessage::Binary { opcode, payload } => {
+                    let sequence = self
+                        .dave_state
+                        .last_binary_sequence
+                        .unwrap_or(0)
+                        .wrapping_add(1);
+                    let frame =
+                        ws_dave::encode_binary_gateway_packet(sequence, opcode, payload.as_ref());
+                    self.ws_client.send_binary(frame).await?;
+                    self.dave_state.last_binary_sequence = Some(sequence);
+                    trace!(
+                        opcode,
+                        sequence,
+                        payload_len = payload.len(),
+                        "Sent DAVE binary gateway message"
+                    );
+                },
+            }
+        }
+
         Ok(())
     }
 
