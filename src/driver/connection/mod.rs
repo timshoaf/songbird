@@ -70,6 +70,7 @@ impl Connection {
                 session_id: info.session_id.clone(),
                 token: info.token.clone(),
                 user_id: info.user_id.into(),
+                max_dave_protocol_version: Some(1),
             }))
             .await?;
 
