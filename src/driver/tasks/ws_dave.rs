@@ -93,10 +93,6 @@ impl DaveState {
     pub(crate) fn on_execute_transition(&mut self, msg: DaveExecuteTransition) {
         if self.transition_id == Some(msg.transition_id) {
             self.awaiting_transition_execute = false;
-            self.pending_outbound.push_back(DaveOutboundMessage::Json {
-                op: 23,
-                data: serde_json::json!({ "transition_id": msg.transition_id }),
-            });
         }
     }
 
@@ -165,25 +161,84 @@ impl DaveState {
                             }
                         },
                         DaveBinaryOpcode::MlsProposals => {
-                            if let Ok(result) = session.process_proposals(
-                                ProposalsOperationType::APPEND,
-                                &packet.payload,
-                                None,
-                            ) {
+                            if packet.payload.is_empty() {
+                                return;
+                            }
+
+                            let operation_type = if packet.payload[0] == 0 {
+                                ProposalsOperationType::APPEND
+                            } else {
+                                ProposalsOperationType::REVOKE
+                            };
+                            let proposals = &packet.payload[1..];
+
+                            if let Ok(result) =
+                                session.process_proposals(operation_type, proposals, None)
+                            {
                                 if let Some(commit_welcome) = result {
+                                    let mut out = Vec::with_capacity(
+                                        commit_welcome.commit.len()
+                                            + commit_welcome
+                                                .welcome
+                                                .as_ref()
+                                                .map_or(0, |w| w.len()),
+                                    );
+                                    out.extend_from_slice(&commit_welcome.commit);
+                                    if let Some(welcome) = commit_welcome.welcome {
+                                        out.extend_from_slice(&welcome);
+                                    }
+
                                     self.pending_outbound
                                         .push_back(DaveOutboundMessage::Binary {
                                             opcode: 28,
-                                            payload: Bytes::from(commit_welcome.commit),
+                                            payload: Bytes::from(out),
                                         });
                                 }
                             }
                         },
                         DaveBinaryOpcode::MlsAnnounceCommitTransition => {
-                            let _ = session.process_commit(&packet.payload);
+                            if packet.payload.len() < 2 {
+                                return;
+                            }
+                            let transition_id =
+                                u16::from_be_bytes([packet.payload[0], packet.payload[1]]) as u32;
+                            let commit = &packet.payload[2..];
+                            match session.process_commit(commit) {
+                                Ok(()) => {
+                                    self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                                        op: 23,
+                                        data: serde_json::json!({ "transition_id": transition_id }),
+                                    });
+                                },
+                                Err(_) => {
+                                    self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                                        op: 31,
+                                        data: serde_json::json!({ "transition_id": transition_id }),
+                                    });
+                                },
+                            }
                         },
                         DaveBinaryOpcode::MlsWelcome => {
-                            let _ = session.process_welcome(&packet.payload);
+                            if packet.payload.len() < 2 {
+                                return;
+                            }
+                            let transition_id =
+                                u16::from_be_bytes([packet.payload[0], packet.payload[1]]) as u32;
+                            let welcome = &packet.payload[2..];
+                            match session.process_welcome(welcome) {
+                                Ok(()) => {
+                                    self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                                        op: 23,
+                                        data: serde_json::json!({ "transition_id": transition_id }),
+                                    });
+                                },
+                                Err(_) => {
+                                    self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                                        op: 31,
+                                        data: serde_json::json!({ "transition_id": transition_id }),
+                                    });
+                                },
+                            }
                         },
                         DaveBinaryOpcode::MlsCommitWelcome | DaveBinaryOpcode::MlsKeyPackage => {
                             // Outbound-only from client for normal flow.
