@@ -12,7 +12,7 @@ use audiopus::{
     packet::Packet as OpusPacket,
 };
 use discortp::{rtp::RtpExtensionPacket, Packet, PacketSize};
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 #[derive(Debug)]
 pub struct SsrcState {
@@ -100,8 +100,18 @@ impl SsrcState {
             let missed_packets = new_seq.saturating_sub(self.playout_buffer.next_seq().0);
 
             // TODO: maybe hand over audio and extension indices alongside packet?
+            let encoded_payload = &payload[payload_offset..payload_end_pad];
+            if should_decode && !decrypted {
+                tracing::debug!(
+                    ssrc = rtp.get_ssrc(),
+                    user_id = _user_id,
+                    payload_len = encoded_payload.len(),
+                    "decoding payload without transport decrypt; likely still E2EE-encoded"
+                );
+            }
+
             let (audio, _packet_size) = self.scan_and_decode(
-                &payload[payload_offset..payload_end_pad],
+                encoded_payload,
                 extensions,
                 missed_packets,
                 should_decode && decrypted,
