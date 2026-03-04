@@ -24,10 +24,7 @@ use crate::{
     Config,
 };
 use audiopus::{
-    coder::Encoder as OpusEncoder,
-    softclip::SoftClip,
-    Application as CodingMode,
-    Bitrate,
+    coder::Encoder as OpusEncoder, softclip::SoftClip, Application as CodingMode, Bitrate,
 };
 use discortp::{
     discord::MutableKeepalivePacket,
@@ -503,10 +500,12 @@ impl Mixer {
     #[inline]
     pub(crate) fn test_signal_empty_tick(&self) {
         match &self.config.override_connection {
-            Some(OutputMode::Raw(tx)) =>
-                drop(tx.send(crate::driver::test_config::TickMessage::NoEl)),
-            Some(OutputMode::Rtp(tx)) =>
-                drop(tx.send(crate::driver::test_config::TickMessage::NoEl)),
+            Some(OutputMode::Raw(tx)) => {
+                drop(tx.send(crate::driver::test_config::TickMessage::NoEl))
+            },
+            Some(OutputMode::Rtp(tx)) => {
+                drop(tx.send(crate::driver::test_config::TickMessage::NoEl))
+            },
             None => {},
         }
     }
@@ -641,7 +640,7 @@ impl Mixer {
 
         // If passthrough, Opus payload in place already.
         // Else encode into buffer with space for AEAD encryption headers.
-        let payload_len = match mix_len {
+        let mut payload_len = match mix_len {
             MixType::Passthrough(opus_len) => opus_len,
             MixType::MixedPcm(_samples) => {
                 let total_payload_space = payload.len() - crypto_mode.payload_suffix_len();
@@ -651,6 +650,24 @@ impl Mixer {
                 )?
             },
         };
+
+        #[cfg(feature = "dave-e2ee")]
+        {
+            let plain = payload[first_payload_byte..first_payload_byte + payload_len].to_vec();
+            let encrypted = {
+                let mut dave = conn.dave_state.lock().expect("dave mutex poisoned");
+                dave.encrypt_opus_for_self(&plain)
+            };
+
+            if let Some(encrypted) = encrypted {
+                let total_payload_space = payload.len() - crypto_mode.payload_suffix_len();
+                let out_slice = &mut payload[first_payload_byte..total_payload_space];
+                if encrypted.len() <= out_slice.len() {
+                    out_slice[..encrypted.len()].copy_from_slice(&encrypted);
+                    payload_len = encrypted.len();
+                }
+            }
+        }
 
         let final_payload_size = conn
             .crypto_state
@@ -848,8 +865,9 @@ impl Mixer {
             // to recreate? Probably not doable in the general case.
             match status {
                 MixStatus::Live => track.step_frame(),
-                MixStatus::Errored(e) =>
-                    track.playing = PlayMode::Errored(PlayError::Decode(e.into())),
+                MixStatus::Errored(e) => {
+                    track.playing = PlayMode::Errored(PlayError::Decode(e.into()))
+                },
                 MixStatus::Ended if track.do_loop() => {
                     drop(self.track_handles[i].seek(Duration::default()));
                     if !self.prevent_events {

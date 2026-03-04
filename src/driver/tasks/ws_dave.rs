@@ -292,6 +292,19 @@ impl DaveState {
         session.decrypt(user_id, MediaType::AUDIO, packet).ok()
     }
 
+    #[cfg(feature = "dave-e2ee")]
+    pub(crate) fn encrypt_opus_for_self(&mut self, packet: &[u8]) -> Option<Vec<u8>> {
+        let session = self.session.as_mut()?;
+        if !session.is_ready() {
+            return None;
+        }
+
+        session
+            .encrypt_opus(packet)
+            .ok()
+            .map(|cow| cow.into_owned())
+    }
+
     pub(crate) fn take_pending_outbound(&mut self) -> Option<DaveOutboundMessage> {
         self.pending_outbound.pop_front()
     }

@@ -231,6 +231,7 @@ impl Connection {
         let udp_tx = udp.into_std()?;
 
         let ssrc = ready.ssrc;
+        let dave_state = ws_dave::new_shared_state();
 
         let mix_conn = MixerConnection {
             #[cfg(feature = "receive")]
@@ -238,6 +239,8 @@ impl Connection {
             #[cfg(not(feature = "receive"))]
             cipher,
             crypto_state: chosen_crypto.into(),
+            #[cfg(feature = "dave-e2ee")]
+            dave_state: dave_state.clone(),
             #[cfg(feature = "receive")]
             udp_rx: udp_receiver_msg_tx,
             udp_tx,
@@ -253,8 +256,6 @@ impl Connection {
 
         #[cfg(feature = "receive")]
         let ssrc_tracker = Arc::new(SsrcTracker::default());
-
-        let dave_state = ws_dave::new_shared_state();
 
         let ws_state = AuxNetwork::new(
             ws_msg_rx,

@@ -70,6 +70,8 @@ impl Mixer {
         let fake_conn = MixerConnection {
             cipher,
             crypto_state,
+            #[cfg(feature = "dave-e2ee")]
+            dave_state: super::tasks::ws_dave::new_shared_state(),
             udp_rx: udp_receiver_tx,
             udp_tx,
         };
@@ -78,6 +80,8 @@ impl Mixer {
         let fake_conn = MixerConnection {
             cipher,
             crypto_state,
+            #[cfg(feature = "dave-e2ee")]
+            dave_state: super::tasks::ws_dave::new_shared_state(),
             udp_tx,
         };
 

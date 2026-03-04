@@ -5,7 +5,7 @@ use super::UdpRxMessage;
 use super::{Interconnect, TrackContext, WsMessage};
 
 use crate::{
-    driver::{crypto::Cipher, Bitrate, Config, CryptoState},
+    driver::{crypto::Cipher, tasks::ws_dave::SharedDaveState, Bitrate, Config, CryptoState},
     input::{AudioStreamError, Compose, Parsed},
 };
 use flume::Sender;
@@ -15,6 +15,8 @@ use symphonia_core::{errors::Error as SymphoniaError, formats::SeekedTo};
 pub struct MixerConnection {
     pub cipher: Cipher,
     pub crypto_state: CryptoState,
+    #[cfg(feature = "dave-e2ee")]
+    pub dave_state: SharedDaveState,
     #[cfg(feature = "receive")]
     pub udp_rx: Sender<UdpRxMessage>,
     pub udp_tx: UdpSocket,
