@@ -13,7 +13,7 @@ use super::{
 use crate::{
     constants::*,
     model::{
-        payload::{Identify, Resume, SelectProtocol},
+        payload::{Resume, SelectProtocol},
         Event as GatewayEvent, ProtocolData,
     },
     ws::WsStream,
@@ -22,6 +22,7 @@ use crate::{
 use discortp::discord::{IpDiscoveryPacket, IpDiscoveryType, MutableIpDiscoveryPacket};
 use error::{Error, Result};
 use flume::Sender;
+use serde::Serialize;
 use socket2::Socket;
 #[cfg(feature = "receive")]
 use std::sync::Arc;
@@ -64,13 +65,26 @@ impl Connection {
         let mut hello = None;
         let mut ready = None;
 
+        #[derive(Serialize)]
+        struct IdentifyWithDave {
+            server_id: u64,
+            session_id: String,
+            token: String,
+            user_id: u64,
+            max_dave_protocol_version: u16,
+        }
+
         client
-            .send_json(&GatewayEvent::from(Identify {
-                server_id: info.guild_id.into(),
-                session_id: info.session_id.clone(),
-                token: info.token.clone(),
-                user_id: info.user_id.into(),
-            }))
+            .send_json_opcode(
+                0,
+                &IdentifyWithDave {
+                    server_id: info.guild_id.0.get(),
+                    session_id: info.session_id.clone(),
+                    token: info.token.clone(),
+                    user_id: info.user_id.0.get(),
+                    max_dave_protocol_version: 1,
+                },
+            )
             .await?;
 
         loop {
