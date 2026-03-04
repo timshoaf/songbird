@@ -8,6 +8,8 @@ pub struct StoredPacket {
     pub packet: Bytes,
     // We need to store this as it's possible that a user can change config modes.
     pub decrypted: bool,
+    // Best-effort Discord user id (snowflake) associated with this SSRC at packet ingest.
+    pub user_id: Option<u64>,
 }
 
 /// Determines whether an SSRC's packets should be decoded.

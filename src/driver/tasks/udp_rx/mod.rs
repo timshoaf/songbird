@@ -192,9 +192,18 @@ impl UdpRx {
                 // to *speech* rather than just presence.
                 entry.refresh_timer(self.config.decode_state_timeout);
 
+                let sender_user_id = self.ssrc_signalling.user_ssrc_map.iter().find_map(|kv| {
+                    if *kv.value() == rtp.get_ssrc() {
+                        Some(kv.key().0)
+                    } else {
+                        None
+                    }
+                });
+
                 let store_pkt = StoredPacket {
                     packet: packet.freeze(),
                     decrypted,
+                    user_id: sender_user_id,
                 };
                 let packet = store_pkt.packet.clone();
                 entry.store_packet(store_pkt, &self.config);

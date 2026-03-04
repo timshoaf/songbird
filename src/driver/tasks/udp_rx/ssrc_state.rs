@@ -2,8 +2,7 @@ use super::*;
 use crate::{
     driver::{
         tasks::error::{Error, Result},
-        Channels,
-        DecodeMode,
+        Channels, DecodeMode,
     },
     events::context_data::{RtpData, VoiceData},
 };
@@ -70,7 +69,11 @@ impl SsrcState {
         // different cases: null packet who we want to decode as a miss, and packet who we must ignore temporarily.
         let m_pkt = self.playout_buffer.fetch_packet(config);
         let pkt = match m_pkt {
-            PacketLookup::Packet(StoredPacket { packet, decrypted }) => Some((packet, decrypted)),
+            PacketLookup::Packet(StoredPacket {
+                packet,
+                decrypted,
+                user_id,
+            }) => Some((packet, decrypted, user_id)),
             PacketLookup::MissedPacket => None,
             PacketLookup::Filling => return Ok(None),
         };
@@ -82,7 +85,7 @@ impl SsrcState {
 
         let should_decode = config.decode_mode == DecodeMode::Decode;
 
-        if let Some((packet, decrypted)) = pkt {
+        if let Some((packet, decrypted, _user_id)) = pkt {
             let rtp = RtpPacket::new(&packet).unwrap();
             let extensions = rtp.get_extension() != 0;
 
