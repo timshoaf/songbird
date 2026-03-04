@@ -94,14 +94,30 @@ pub(crate) struct DaveInvalidCommitWelcome {
 
 impl DaveState {
     pub(crate) fn on_prepare_transition(&mut self, msg: DavePrepareTransition) {
+        if let Some(current) = self.transition_id {
+            if msg.transition_id < current {
+                return;
+            }
+        }
+
         self.transition_id = Some(msg.transition_id);
         self.protocol_version = Some(msg.protocol_version);
         self.awaiting_transition_execute = true;
+
+        #[cfg(feature = "dave-e2ee")]
+        if let Some(session) = self.session.as_mut() {
+            session.set_passthrough_mode(true, Some(10));
+        }
     }
 
     pub(crate) fn on_execute_transition(&mut self, msg: DaveExecuteTransition) {
         if self.transition_id == Some(msg.transition_id) {
             self.awaiting_transition_execute = false;
+
+            #[cfg(feature = "dave-e2ee")]
+            if let Some(session) = self.session.as_mut() {
+                session.set_passthrough_mode(false, Some(10));
+            }
         }
     }
 
@@ -111,6 +127,12 @@ impl DaveState {
         user_id: u64,
         channel_id: u64,
     ) {
+        if let Some(current) = self.transition_id {
+            if msg.transition_id < current {
+                return;
+            }
+        }
+
         let previous_epoch = self.epoch;
         self.transition_id = Some(msg.transition_id);
         self.protocol_version = Some(msg.protocol_version);
@@ -125,28 +147,34 @@ impl DaveState {
                 return;
             }
 
-            let protocol = NonZeroU16::new(msg.protocol_version)
-                .or_else(|| NonZeroU16::new(DAVE_PROTOCOL_VERSION))
-                .expect("DAVE protocol version constant must be non-zero");
+            let needs_fresh_session = msg.epoch == 1 || self.session.is_none();
+            if needs_fresh_session {
+                let protocol = NonZeroU16::new(msg.protocol_version)
+                    .or_else(|| NonZeroU16::new(DAVE_PROTOCOL_VERSION))
+                    .expect("DAVE protocol version constant must be non-zero");
 
-            let mut session = DaveSession::new(protocol, user_id, channel_id, None)
-                .or_else(|_| {
-                    DaveSession::new(
-                        NonZeroU16::new(DAVE_PROTOCOL_VERSION).expect("non-zero"),
-                        user_id,
-                        channel_id,
-                        None,
-                    )
-                })
-                .ok();
+                let mut session = DaveSession::new(protocol, user_id, channel_id, None)
+                    .or_else(|_| {
+                        DaveSession::new(
+                            NonZeroU16::new(DAVE_PROTOCOL_VERSION).expect("non-zero"),
+                            user_id,
+                            channel_id,
+                            None,
+                        )
+                    })
+                    .ok();
 
-            if let Some(ref mut session) = session {
-                if let Ok(key_package) = session.create_key_package() {
-                    self.pending_key_package = Some(Bytes::from(key_package));
+                if let Some(ref mut session) = session {
+                    session.set_passthrough_mode(true, Some(10));
+                    if let Ok(key_package) = session.create_key_package() {
+                        self.pending_key_package = Some(Bytes::from(key_package));
+                    }
                 }
-            }
 
-            self.session = session;
+                self.session = session;
+            } else if let Some(session) = self.session.as_mut() {
+                session.set_passthrough_mode(true, Some(10));
+            }
         }
 
         // If this protocol transition keeps the same epoch, there is no commit/welcome
@@ -162,6 +190,11 @@ impl DaveState {
     pub(crate) fn on_invalid_commit_welcome(&mut self, msg: DaveInvalidCommitWelcome) {
         if self.transition_id == Some(msg.transition_id) {
             self.awaiting_transition_execute = false;
+
+            #[cfg(feature = "dave-e2ee")]
+            if let Some(session) = self.session.as_mut() {
+                session.set_passthrough_mode(true, Some(10));
+            }
         }
     }
 
@@ -231,6 +264,14 @@ impl DaveState {
                             let transition_id =
                                 u16::from_be_bytes([packet.payload[0], packet.payload[1]]) as u32;
                             let commit = &packet.payload[2..];
+                            if self.transition_id != Some(transition_id) {
+                                self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                                    op: 31,
+                                    data: serde_json::json!({ "transition_id": transition_id }),
+                                });
+                                return;
+                            }
+
                             match session.process_commit(commit) {
                                 Ok(()) => {
                                     self.pending_outbound.push_back(DaveOutboundMessage::Json {
@@ -253,6 +294,14 @@ impl DaveState {
                             let transition_id =
                                 u16::from_be_bytes([packet.payload[0], packet.payload[1]]) as u32;
                             let welcome = &packet.payload[2..];
+                            if self.transition_id != Some(transition_id) {
+                                self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                                    op: 31,
+                                    data: serde_json::json!({ "transition_id": transition_id }),
+                                });
+                                return;
+                            }
+
                             match session.process_welcome(welcome) {
                                 Ok(()) => {
                                     self.pending_outbound.push_back(DaveOutboundMessage::Json {
