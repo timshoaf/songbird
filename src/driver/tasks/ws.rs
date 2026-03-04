@@ -84,6 +84,7 @@ impl AuxNetwork {
         loop {
             let mut ws_error = false;
             let mut should_reconnect = false;
+            let mut force_full_reconnect = false;
             let mut ws_reason = None;
 
             let hb = sleep_until(next_heartbeat);
@@ -93,6 +94,7 @@ impl AuxNetwork {
                     ws_error = match self.send_heartbeat().await {
                         Err(e) => {
                             should_reconnect = ws_error_is_not_final(&e);
+                            force_full_reconnect = ws_error_requires_full_reconnect(&e);
                             ws_reason = Some((&e).into());
                             true
                         },
@@ -104,6 +106,7 @@ impl AuxNetwork {
                     ws_error = match ws_msg {
                         Err(e) => {
                             should_reconnect = ws_error_is_not_final(&e);
+                            force_full_reconnect = ws_error_requires_full_reconnect(&e);
                             ws_reason = Some((&e).into());
                             true
                         },
@@ -111,6 +114,7 @@ impl AuxNetwork {
                             self.process_ws(interconnect, msg);
                             if let Err(e) = self.flush_dave_outbound().await {
                                 should_reconnect = ws_error_is_not_final(&e);
+                                force_full_reconnect = ws_error_requires_full_reconnect(&e);
                                 ws_reason = Some((&e).into());
                                 true
                             } else {
@@ -121,6 +125,7 @@ impl AuxNetwork {
                             self.process_ws_unknown_json(interconnect, op, data);
                             if let Err(e) = self.flush_dave_outbound().await {
                                 should_reconnect = ws_error_is_not_final(&e);
+                                force_full_reconnect = ws_error_requires_full_reconnect(&e);
                                 ws_reason = Some((&e).into());
                                 true
                             } else {
@@ -131,6 +136,7 @@ impl AuxNetwork {
                             self.process_ws_binary(interconnect, msg);
                             if let Err(e) = self.flush_dave_outbound().await {
                                 should_reconnect = ws_error_is_not_final(&e);
+                                force_full_reconnect = ws_error_requires_full_reconnect(&e);
                                 ws_reason = Some((&e).into());
                                 true
                             } else {
@@ -171,6 +177,7 @@ impl AuxNetwork {
                                 ws_error |= match ssu_status {
                                     Err(e) => {
                                         should_reconnect = ws_error_is_not_final(&e);
+                                        force_full_reconnect = ws_error_requires_full_reconnect(&e);
                                         ws_reason = Some((&e).into());
                                         true
                                     },
@@ -183,6 +190,7 @@ impl AuxNetwork {
                             if let Err(e) = self.flush_dave_outbound().await {
                                 ws_error = true;
                                 should_reconnect = ws_error_is_not_final(&e);
+                                force_full_reconnect = ws_error_requires_full_reconnect(&e);
                                 ws_reason = Some((&e).into());
                             }
                         },
@@ -191,6 +199,7 @@ impl AuxNetwork {
                             if let Err(e) = self.flush_dave_outbound().await {
                                 ws_error = true;
                                 should_reconnect = ws_error_is_not_final(&e);
+                                force_full_reconnect = ws_error_requires_full_reconnect(&e);
                                 ws_reason = Some((&e).into());
                             }
                         },
@@ -199,6 +208,7 @@ impl AuxNetwork {
                             if let Err(e) = self.flush_dave_outbound().await {
                                 ws_error = true;
                                 should_reconnect = ws_error_is_not_final(&e);
+                                force_full_reconnect = ws_error_requires_full_reconnect(&e);
                                 ws_reason = Some((&e).into());
                             }
                         },
@@ -213,7 +223,15 @@ impl AuxNetwork {
                 self.dont_send = true;
 
                 if should_reconnect {
-                    drop(interconnect.core.send(CoreMessage::Reconnect));
+                    if force_full_reconnect {
+                        {
+                            let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
+                            *dave = ws_dave::DaveState::default();
+                        }
+                        drop(interconnect.core.send(CoreMessage::FullReconnect));
+                    } else {
+                        drop(interconnect.core.send(CoreMessage::Reconnect));
+                    }
                 } else {
                     drop(interconnect.core.send(CoreMessage::SignalWsClosure(
                         self.attempt_idx,
@@ -473,6 +491,20 @@ pub(crate) async fn runner(mut interconnect: Interconnect, mut aux: AuxNetwork) 
     trace!("WS thread started.");
     aux.run(&mut interconnect).await;
     trace!("WS thread finished.");
+}
+
+fn ws_error_requires_full_reconnect(err: &WsError) -> bool {
+    match err {
+        #[cfg(feature = "tungstenite")]
+        WsError::WsClosed(Some(frame)) => match frame.code {
+            CloseCode::Library(l) => matches!(
+                VoiceCloseCode::from_u16(l),
+                Some(VoiceCloseCode::SessionInvalid)
+            ),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 fn ws_error_is_not_final(err: &WsError) -> bool {
