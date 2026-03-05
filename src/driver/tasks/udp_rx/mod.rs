@@ -233,13 +233,22 @@ impl UdpRx {
                                 }
                             },
                             None => {
-                                tracing::debug!(
-                                    user_id,
-                                    ssrc = rtp.get_ssrc(),
-                                    dave_ready,
-                                    payload_len = encrypted_buf.len(),
-                                    "DAVE inbound decrypt not applied"
-                                );
+                                if dave_ready {
+                                    tracing::warn!(
+                                        user_id,
+                                        ssrc = rtp.get_ssrc(),
+                                        payload_len = encrypted_buf.len(),
+                                        "DAVE ready but inbound decrypt failed for packet"
+                                    );
+                                } else {
+                                    tracing::debug!(
+                                        user_id,
+                                        ssrc = rtp.get_ssrc(),
+                                        dave_ready,
+                                        payload_len = encrypted_buf.len(),
+                                        "DAVE inbound decrypt not applied"
+                                    );
+                                }
                             },
                         }
                     }
