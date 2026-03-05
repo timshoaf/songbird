@@ -385,11 +385,10 @@ impl AuxNetwork {
                         );
                     },
                     None => {
-                        debug!(
+                        trace!(
                             opcode = pkt.opcode,
                             sequence = ?pkt.sequence,
                             payload_len = pkt.payload.len(),
-                            first_bytes = ?&pkt.payload[..pkt.payload.len().min(8)],
                             "Received non-DAVE binary voice gateway payload"
                         );
                     },
@@ -407,7 +406,7 @@ impl AuxNetwork {
     fn process_ws_unknown_json(&mut self, _interconnect: &Interconnect, op: u8, data: Value) {
         match op {
             21 => {
-                debug!(op, data = %data, "DAVE prepare transition raw payload");
+                trace!(op, data = %data, "DAVE prepare transition raw payload");
                 if let Some(msg) = ws_dave::parse_prepare_transition(&data) {
                     {
                         let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
@@ -430,7 +429,7 @@ impl AuxNetwork {
                         "Processed DAVE prepare transition"
                     );
                 } else {
-                    debug!(op, data = %data, "Malformed DAVE prepare transition payload");
+                    warn!(op, data = %data, "Malformed DAVE prepare transition payload");
                 }
             },
             22 => {
@@ -448,7 +447,7 @@ impl AuxNetwork {
                 }
             },
             24 => {
-                debug!(op, data = %data, "DAVE prepare epoch raw payload");
+                trace!(op, data = %data, "DAVE prepare epoch raw payload");
                 if let Some(msg) = ws_dave::parse_prepare_epoch(&data) {
                     let user_id: u64 = self.info.user_id.0.get();
                     let channel_id: u64 = self
@@ -479,7 +478,7 @@ impl AuxNetwork {
                         "Processed DAVE prepare epoch"
                     );
                 } else {
-                    debug!(op, data = %data, "Malformed DAVE prepare epoch payload");
+                    warn!(op, data = %data, "Malformed DAVE prepare epoch payload");
                 }
             },
             31 => {
@@ -497,7 +496,7 @@ impl AuxNetwork {
                 }
             },
             _ => {
-                debug!(op, data = %data, "Received unknown voice gateway JSON opcode");
+                trace!(op, data = %data, "Received unknown voice gateway JSON opcode");
             },
         }
     }
