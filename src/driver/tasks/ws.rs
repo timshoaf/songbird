@@ -407,6 +407,7 @@ impl AuxNetwork {
     fn process_ws_unknown_json(&mut self, _interconnect: &Interconnect, op: u8, data: Value) {
         match op {
             18 | 21 => {
+                debug!(op, data = %data, "DAVE prepare transition raw payload");
                 if let Some(msg) = ws_dave::parse_prepare_transition(&data) {
                     {
                         let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
@@ -447,6 +448,7 @@ impl AuxNetwork {
                 }
             },
             20 | 24 => {
+                debug!(op, data = %data, "DAVE prepare epoch raw payload");
                 if let Some(msg) = ws_dave::parse_prepare_epoch(&data) {
                     let user_id: u64 = self.info.user_id.0.get();
                     let channel_id: u64 = self
