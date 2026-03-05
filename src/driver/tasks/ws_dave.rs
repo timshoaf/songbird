@@ -217,7 +217,9 @@ impl DaveState {
     }
 
     pub(crate) fn on_binary_packet(&mut self, packet: &BinaryGatewayPacket) {
-        self.last_binary_sequence = Some(packet.sequence);
+        if let Some(sequence) = packet.sequence {
+            self.last_binary_sequence = Some(sequence);
+        }
 
         #[cfg(feature = "dave-e2ee")]
         {
