@@ -405,7 +405,7 @@ impl AuxNetwork {
 
     fn process_ws_unknown_json(&mut self, _interconnect: &Interconnect, op: u8, data: Value) {
         match op {
-            21 => {
+            18 | 21 => {
                 if let Some(msg) = ws_dave::parse_prepare_transition(&data) {
                     {
                         let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
@@ -416,6 +416,7 @@ impl AuxNetwork {
                             seen21,
                             seen24,
                             seen25,
+                            op,
                             transition_id = msg.transition_id,
                             protocol_version = msg.protocol_version,
                             "DAVE prepare transition observed"
@@ -444,7 +445,7 @@ impl AuxNetwork {
                     trace!(op, data = %data, "Malformed DAVE execute transition payload");
                 }
             },
-            24 => {
+            20 | 24 => {
                 if let Some(msg) = ws_dave::parse_prepare_epoch(&data) {
                     let user_id: u64 = self.info.user_id.0.get();
                     let channel_id: u64 = self
@@ -461,6 +462,7 @@ impl AuxNetwork {
                             seen21,
                             seen24,
                             seen25,
+                            op,
                             transition_id = msg.transition_id,
                             protocol_version = msg.protocol_version,
                             epoch = msg.epoch,
@@ -492,7 +494,7 @@ impl AuxNetwork {
                 }
             },
             _ => {
-                trace!(op, data = %data, "Received unknown voice gateway JSON opcode");
+                debug!(op, data = %data, "Received unknown voice gateway JSON opcode");
             },
         }
     }
