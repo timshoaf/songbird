@@ -195,20 +195,28 @@ impl UdpRx {
 
                 #[cfg(feature = "dave-e2ee")]
                 if let Some(user_id) = sender_user_id {
-                    let payload = rtp.payload();
-                    if payload.len() >= rtp_body_start + rtp_body_tail {
-                        let encrypted_slice =
-                            &payload[rtp_body_start..payload.len() - rtp_body_tail];
+                    let (payload_len, encrypted_buf) = {
+                        let payload = rtp.payload();
+                        if payload.len() >= rtp_body_start + rtp_body_tail {
+                            (
+                                payload.len(),
+                                payload[rtp_body_start..payload.len() - rtp_body_tail].to_vec(),
+                            )
+                        } else {
+                            (0usize, Vec::new())
+                        }
+                    };
+
+                    if payload_len > 0 {
                         let (dave_ready, decrypted_payload) = {
                             let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
                             let ready = dave.dave_ready();
-                            let out = dave.decrypt_opus_for_user(user_id, encrypted_slice);
+                            let out = dave.decrypt_opus_for_user(user_id, &encrypted_buf);
                             (ready, out)
                         };
 
                         match decrypted_payload {
                             Some(plain) => {
-                                let payload_len = payload.len();
                                 if rtp_body_start + plain.len() <= payload_len {
                                     let payload_mut = rtp.payload_mut();
                                     payload_mut[rtp_body_start..rtp_body_start + plain.len()]
@@ -218,7 +226,7 @@ impl UdpRx {
                                     tracing::debug!(
                                         user_id,
                                         ssrc = rtp.get_ssrc(),
-                                        in_len = encrypted_slice.len(),
+                                        in_len = encrypted_buf.len(),
                                         out_len = plain.len(),
                                         "DAVE inbound decrypt success"
                                     );
@@ -229,7 +237,7 @@ impl UdpRx {
                                     user_id,
                                     ssrc = rtp.get_ssrc(),
                                     dave_ready,
-                                    payload_len = encrypted_slice.len(),
+                                    payload_len = encrypted_buf.len(),
                                     "DAVE inbound decrypt not applied"
                                 );
                             },
