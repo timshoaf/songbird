@@ -12,7 +12,7 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub(crate) struct BinaryGatewayPacket {
-    pub(crate) sequence: u16,
+    pub(crate) sequence: Option<u16>,
     pub(crate) opcode: u8,
     pub(crate) payload: Bytes,
 }
@@ -76,24 +76,30 @@ pub(crate) struct DaveState {
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub(crate) struct DavePrepareTransition {
+    #[serde(alias = "transitionId")]
     pub(crate) transition_id: u32,
+    #[serde(alias = "protocolVersion")]
     pub(crate) protocol_version: u16,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub(crate) struct DaveExecuteTransition {
+    #[serde(alias = "transitionId")]
     pub(crate) transition_id: u32,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub(crate) struct DavePrepareEpoch {
+    #[serde(alias = "transitionId")]
     pub(crate) transition_id: u32,
+    #[serde(alias = "protocolVersion")]
     pub(crate) protocol_version: u16,
     pub(crate) epoch: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
 pub(crate) struct DaveInvalidCommitWelcome {
+    #[serde(alias = "transitionId")]
     pub(crate) transition_id: u32,
 }
 
@@ -464,6 +470,21 @@ pub(crate) fn decode_transition_payload(payload: &[u8]) -> Option<(u16, &[u8])> 
 }
 
 pub(crate) fn parse_binary_gateway_packet(buf: &[u8]) -> Option<BinaryGatewayPacket> {
+    if buf.is_empty() {
+        return None;
+    }
+
+    // Observed wire variants in the field:
+    // 1) opcode + payload
+    // 2) u16 sequence + opcode + payload
+    if matches!(buf[0], 25 | 26 | 27 | 28 | 29 | 30) {
+        return Some(BinaryGatewayPacket {
+            sequence: None,
+            opcode: buf[0],
+            payload: Bytes::copy_from_slice(&buf[1..]),
+        });
+    }
+
     if buf.len() < 3 {
         return None;
     }
@@ -473,7 +494,7 @@ pub(crate) fn parse_binary_gateway_packet(buf: &[u8]) -> Option<BinaryGatewayPac
     let payload = Bytes::copy_from_slice(&buf[3..]);
 
     Some(BinaryGatewayPacket {
-        sequence,
+        sequence: Some(sequence),
         opcode,
         payload,
     })

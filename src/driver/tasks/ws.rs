@@ -372,23 +372,24 @@ impl AuxNetwork {
                                 seen21,
                                 seen24,
                                 seen25,
-                                sequence = pkt.sequence,
+                                sequence = ?pkt.sequence,
                                 payload_len = pkt.payload.len(),
                                 "DAVE external sender observed"
                             );
                         }
                         trace!(
                             ?opcode,
-                            sequence = pkt.sequence,
+                            sequence = ?pkt.sequence,
                             payload_len = pkt.payload.len(),
                             "Received DAVE binary voice gateway payload"
                         );
                     },
                     None => {
-                        trace!(
+                        debug!(
                             opcode = pkt.opcode,
-                            sequence = pkt.sequence,
+                            sequence = ?pkt.sequence,
                             payload_len = pkt.payload.len(),
+                            first_bytes = ?&pkt.payload[..pkt.payload.len().min(8)],
                             "Received non-DAVE binary voice gateway payload"
                         );
                     },
@@ -428,7 +429,7 @@ impl AuxNetwork {
                         "Processed DAVE prepare transition"
                     );
                 } else {
-                    trace!(op, data = %data, "Malformed DAVE prepare transition payload");
+                    debug!(op, data = %data, "Malformed DAVE prepare transition payload");
                 }
             },
             22 => {
@@ -476,7 +477,7 @@ impl AuxNetwork {
                         "Processed DAVE prepare epoch"
                     );
                 } else {
-                    trace!(op, data = %data, "Malformed DAVE prepare epoch payload");
+                    debug!(op, data = %data, "Malformed DAVE prepare epoch payload");
                 }
             },
             31 => {
