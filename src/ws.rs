@@ -176,6 +176,21 @@ pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Gate
         .and_then(|v| u8::try_from(v).ok())
     {
         debug!(op, "WS JSON opcode observed");
+        if op == 4 {
+            let data = value.get("d").cloned().unwrap_or(Value::Null);
+            let dave_v = data
+                .get("dave_protocol_version")
+                .and_then(Value::as_u64)
+                .or_else(|| data.get("protocol_version").and_then(Value::as_u64))
+                .or_else(|| {
+                    data.get("dave_protocol")
+                        .and_then(|v| v.get("version"))
+                        .and_then(Value::as_u64)
+                });
+            debug!(d = %data, ?dave_v, "WS select_protocol_ack payload observed");
+            return Ok(Some(GatewayMessage::UnknownJson { op, data }));
+        }
+
         // Force DAVE control-plane opcodes through unknown-json path so they reach
         // ws::process_ws_unknown_json even if voice-model parses them as generic events.
         if matches!(op, 18 | 20 | 21 | 22 | 24 | 31) {

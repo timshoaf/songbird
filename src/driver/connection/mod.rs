@@ -24,6 +24,7 @@ use discortp::discord::{IpDiscoveryPacket, IpDiscoveryType, MutableIpDiscoveryPa
 use error::{Error, Result};
 use flume::Sender;
 use serde::Serialize;
+use serde_json::Value;
 use socket2::Socket;
 #[cfg(feature = "receive")]
 use std::sync::Arc;
@@ -370,6 +371,29 @@ fn generate_url(endpoint: &str) -> Result<Url> {
     Url::parse(&format!("wss://{endpoint}/?v={VOICE_GATEWAY_VERSION}")).or(Err(Error::EndpointUrl))
 }
 
+fn dave_protocol_version_from_op4(data: &Value) -> Option<u16> {
+    data.get("dave_protocol_version")
+        .and_then(Value::as_u64)
+        .or_else(|| data.get("protocol_version").and_then(Value::as_u64))
+        .or_else(|| {
+            data.get("dave_protocol")
+                .and_then(|v| v.get("version"))
+                .and_then(Value::as_u64)
+        })
+        .and_then(|v| u16::try_from(v).ok())
+}
+
+fn parse_session_description_from_op4(data: &Value) -> Option<(String, Vec<u8>)> {
+    let mode = data.get("mode")?.as_str()?.to_string();
+    let secret_key = data
+        .get("secret_key")?
+        .as_array()?
+        .iter()
+        .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
+        .collect::<Option<Vec<u8>>>()?;
+    Some((mode, secret_key))
+}
+
 #[inline]
 async fn init_cipher(
     client: &mut WsStream,
@@ -397,6 +421,36 @@ async fn init_cipher(
                 tx.send(WsMessage::Deliver(other))?;
             },
             crate::ws::GatewayMessage::UnknownJson { op, data } => {
+                if op == 4 {
+                    let dave_version = dave_protocol_version_from_op4(&data);
+                    debug!(?dave_version, data = %data, "Received select_protocol_ack as raw JSON");
+                    if dave_version.is_none() {
+                        debug!("select_protocol_ack missing explicit DAVE protocol version field");
+                    }
+
+                    if matches!(dave_version, Some(0)) {
+                        info!(
+                            "select_protocol_ack negotiated DAVE protocol version 0; refusing E2EE session"
+                        );
+                        return Err(Error::CryptoModeInvalid);
+                    }
+
+                    let Some((mode_name, secret_key)) = parse_session_description_from_op4(&data)
+                    else {
+                        debug!(data = %data, "Malformed select_protocol_ack payload");
+                        tx.send(WsMessage::DeliverUnknownJson { op, data })?;
+                        continue;
+                    };
+
+                    if mode_name != mode.to_request_str() {
+                        return Err(Error::CryptoModeInvalid);
+                    }
+
+                    return mode
+                        .cipher_from_key(&secret_key)
+                        .map_err(|_| Error::CryptoInvalidLength);
+                }
+
                 tx.send(WsMessage::DeliverUnknownJson { op, data })?;
             },
             crate::ws::GatewayMessage::Binary(other) => {
