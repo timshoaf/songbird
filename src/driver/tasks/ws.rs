@@ -56,6 +56,16 @@ impl AuxNetwork {
         dave_state: SharedDaveState,
         #[cfg(feature = "receive")] ssrc_signalling: Arc<SsrcTracker>,
     ) -> Self {
+        {
+            let user_id: u64 = info.user_id.0.get();
+            let channel_id: u64 = info
+                .channel_id
+                .map(|id| id.0.get())
+                .unwrap_or_else(|| info.guild_id.0.get());
+            let mut dave = dave_state.lock().expect("dave mutex poisoned");
+            dave.set_local_ids(user_id, channel_id);
+        }
+
         Self {
             rx: evt_rx,
             ws_client,

@@ -60,6 +60,8 @@ pub(crate) struct DaveState {
     pub(crate) transition_id: Option<u32>,
     pub(crate) awaiting_transition_execute: bool,
     pub(crate) last_binary_sequence: Option<u16>,
+    pub(crate) local_user_id: Option<u64>,
+    pub(crate) local_channel_id: Option<u64>,
 
     #[cfg(feature = "dave-e2ee")]
     session: Option<DaveSession>,
@@ -93,6 +95,11 @@ pub(crate) struct DaveInvalidCommitWelcome {
 }
 
 impl DaveState {
+    pub(crate) fn set_local_ids(&mut self, user_id: u64, channel_id: u64) {
+        self.local_user_id = Some(user_id);
+        self.local_channel_id = Some(channel_id);
+    }
+
     pub(crate) fn on_prepare_transition(&mut self, msg: DavePrepareTransition) {
         if let Some(current) = self.transition_id {
             if msg.transition_id < current {
@@ -204,6 +211,18 @@ impl DaveState {
         #[cfg(feature = "dave-e2ee")]
         {
             if let Some(op) = DaveBinaryOpcode::from_u8(packet.opcode) {
+                if self.session.is_none() && op == DaveBinaryOpcode::MlsExternalSender {
+                    if let (Some(user_id), Some(channel_id)) =
+                        (self.local_user_id, self.local_channel_id)
+                    {
+                        let protocol =
+                            NonZeroU16::new(self.protocol_version.unwrap_or(DAVE_PROTOCOL_VERSION))
+                                .or_else(|| NonZeroU16::new(DAVE_PROTOCOL_VERSION))
+                                .expect("non-zero dave protocol");
+                        self.session = DaveSession::new(protocol, user_id, channel_id, None).ok();
+                    }
+                }
+
                 if let Some(session) = self.session.as_mut() {
                     match op {
                         DaveBinaryOpcode::MlsExternalSender => {
