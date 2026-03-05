@@ -175,6 +175,7 @@ pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Gate
         .and_then(Value::as_u64)
         .and_then(|v| u8::try_from(v).ok())
     {
+        debug!(op, "WS JSON opcode observed");
         // Force DAVE control-plane opcodes through unknown-json path so they reach
         // ws::process_ws_unknown_json even if voice-model parses them as generic events.
         if matches!(op, 18 | 20 | 21 | 22 | 24 | 31) {
