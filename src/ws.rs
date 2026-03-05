@@ -21,7 +21,7 @@ use tokio_tungstenite::{
 use tokio_websockets::{
     CloseCode, Error as TwsError, Limits, MaybeTlsStream, Message, WebSocketStream,
 };
-use tracing::{debug, instrument};
+use tracing::{debug, instrument, warn};
 use url::Url;
 
 pub struct WsStream(WebSocketStream<MaybeTlsStream<TcpStream>>);
@@ -132,8 +132,12 @@ impl From<TwsError> for Error {
 pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<GatewayMessage>> {
     #[cfg(feature = "tungstenite")]
     let text = match message {
-        Some(Message::Text(ref payload)) => payload,
+        Some(Message::Text(ref payload)) => {
+            debug!(len = payload.len(), "WS text frame received");
+            payload
+        },
         Some(Message::Binary(bytes)) => {
+            debug!(len = bytes.len(), "WS binary frame received");
             return Ok(Some(GatewayMessage::Binary(bytes)));
         },
         Some(Message::Close(Some(frame))) => {
@@ -166,7 +170,7 @@ pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Gate
     }
 
     let value = serde_json::from_str::<Value>(text).map_err(|e| {
-        debug!("Unexpected JSON: {e}. Payload: {text}");
+        warn!("Unexpected JSON parse failure: {e}. Payload: {text}");
         e
     })?;
 
@@ -175,9 +179,10 @@ pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Gate
         .and_then(Value::as_u64)
         .and_then(|v| u8::try_from(v).ok())
     else {
-        debug!("Voice gateway JSON missing valid opcode: {value}");
+        warn!("Voice gateway JSON missing valid opcode: {value}");
         return Ok(None);
     };
+    debug!(op, "WS JSON frame parsed with opcode field");
     let data = value.get("d").cloned().unwrap_or(Value::Null);
 
     Ok(Some(GatewayMessage::UnknownJson { op, data }))
