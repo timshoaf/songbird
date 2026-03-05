@@ -26,7 +26,7 @@ use std::{
     time::Duration,
 };
 use tokio::{net::UdpSocket, select, time::Instant};
-use tracing::{error, instrument, trace, warn};
+use tracing::{debug, error, instrument, trace, warn};
 
 type RtpSequence = Wrapping<u16>;
 type RtpTimestamp = Wrapping<u32>;
@@ -96,7 +96,7 @@ impl UdpRx {
                                 }
                             },
                             Err(e) => {
-                                warn!("Decode error for SSRC {ssrc}: {e:?}");
+                                debug!("Decode error for SSRC {ssrc}: {e:?}");
                                 tick.silent.insert(*ssrc);
                             },
                         }
@@ -234,7 +234,7 @@ impl UdpRx {
                             },
                             None => {
                                 if dave_ready {
-                                    tracing::warn!(
+                                    tracing::debug!(
                                         user_id,
                                         ssrc = rtp.get_ssrc(),
                                         payload_len = encrypted_buf.len(),

@@ -197,7 +197,7 @@ impl SsrcState {
                         }
                     },
                     Err(e) => {
-                        error!("Failed to decode received packet: {:?}.", e);
+                        debug!("Failed to decode received packet: {:?}.", e);
                         return Err(e.into());
                     },
                 }
