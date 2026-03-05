@@ -32,6 +32,19 @@ type RtpSequence = Wrapping<u16>;
 type RtpTimestamp = Wrapping<u32>;
 type RtpSsrc = u32;
 
+#[derive(Debug, Default)]
+struct UdpRxStats {
+    udp_packets: u64,
+    rtp_packets: u64,
+    rtcp_packets: u64,
+    demux_fail_parse: u64,
+    demux_too_small: u64,
+    dave_decrypt_success: u64,
+    dave_decrypt_fail_ready: u64,
+    dave_decrypt_skip_not_ready: u64,
+    decode_errors: u64,
+}
+
 struct UdpRx {
     cipher: Cipher,
     crypto_mode: CryptoMode,
@@ -41,6 +54,8 @@ struct UdpRx {
     ssrc_signalling: Arc<SsrcTracker>,
     dave_state: SharedDaveState,
     udp_socket: UdpSocket,
+    stats: UdpRxStats,
+    last_stats_report: Instant,
 }
 
 impl UdpRx {
@@ -96,6 +111,7 @@ impl UdpRx {
                                 }
                             },
                             Err(e) => {
+                                self.stats.decode_errors = self.stats.decode_errors.saturating_add(1);
                                 debug!("Decode error for SSRC {ssrc}: {e:?}");
                                 tick.silent.insert(*ssrc);
                             },
@@ -138,6 +154,24 @@ impl UdpRx {
                     // now remove all dead ssrcs.
                     self.decoder_map.retain(|_, v| v.prune_time > now);
 
+                    if now.duration_since(self.last_stats_report) >= Duration::from_secs(60) {
+                        tracing::info!(
+                            udp_packets = self.stats.udp_packets,
+                            rtp_packets = self.stats.rtp_packets,
+                            rtcp_packets = self.stats.rtcp_packets,
+                            demux_fail_parse = self.stats.demux_fail_parse,
+                            demux_too_small = self.stats.demux_too_small,
+                            dave_decrypt_success = self.stats.dave_decrypt_success,
+                            dave_decrypt_fail_ready = self.stats.dave_decrypt_fail_ready,
+                            dave_decrypt_skip_not_ready = self.stats.dave_decrypt_skip_not_ready,
+                            decode_errors = self.stats.decode_errors,
+                            tracked_ssrcs = self.decoder_map.len(),
+                            "UDP voice pipeline stats (last 60s)"
+                        );
+                        self.stats = UdpRxStats::default();
+                        self.last_stats_report = now;
+                    }
+
                     cleanup_time = now + Duration::from_secs(5);
                 },
             }
@@ -145,6 +179,8 @@ impl UdpRx {
     }
 
     fn process_udp_message(&mut self, interconnect: &Interconnect, mut packet: BytesMut) {
+        self.stats.udp_packets = self.stats.udp_packets.saturating_add(1);
+
         // NOTE: errors here (and in general for UDP) are not fatal to the connection.
         // Panics should be avoided due to adversarial nature of rx'd packets,
         // but correct handling should not prompt a reconnect.
@@ -156,6 +192,7 @@ impl UdpRx {
 
         match demux::demux_mut(packet.as_mut()) {
             DemuxedMut::Rtp(mut rtp) => {
+                self.stats.rtp_packets = self.stats.rtp_packets.saturating_add(1);
                 if !rtp_valid(&rtp.to_immutable()) {
                     error!("Illegal RTP message received.");
                     return;
@@ -223,6 +260,8 @@ impl UdpRx {
                                         .copy_from_slice(&plain);
                                     rtp_body_tail = payload_len - (rtp_body_start + plain.len());
                                     decrypted = true;
+                                    self.stats.dave_decrypt_success =
+                                        self.stats.dave_decrypt_success.saturating_add(1);
                                     tracing::debug!(
                                         user_id,
                                         ssrc = rtp.get_ssrc(),
@@ -234,6 +273,8 @@ impl UdpRx {
                             },
                             None => {
                                 if dave_ready {
+                                    self.stats.dave_decrypt_fail_ready =
+                                        self.stats.dave_decrypt_fail_ready.saturating_add(1);
                                     tracing::debug!(
                                         user_id,
                                         ssrc = rtp.get_ssrc(),
@@ -241,6 +282,8 @@ impl UdpRx {
                                         "DAVE ready but inbound decrypt failed for packet"
                                     );
                                 } else {
+                                    self.stats.dave_decrypt_skip_not_ready =
+                                        self.stats.dave_decrypt_skip_not_ready.saturating_add(1);
                                     tracing::debug!(
                                         user_id,
                                         ssrc = rtp.get_ssrc(),
@@ -282,6 +325,7 @@ impl UdpRx {
                 )));
             },
             DemuxedMut::Rtcp(mut rtcp) => {
+                self.stats.rtcp_packets = self.stats.rtcp_packets.saturating_add(1);
                 let packet_data = if self.config.decode_mode.should_decrypt() {
                     let out = self.cipher.decrypt_rtcp_in_place(&mut rtcp);
 
@@ -310,9 +354,11 @@ impl UdpRx {
                 )));
             },
             DemuxedMut::FailedParse(t) => {
+                self.stats.demux_fail_parse = self.stats.demux_fail_parse.saturating_add(1);
                 warn!("Failed to parse message of type {:?}.", t);
             },
             DemuxedMut::TooSmall => {
+                self.stats.demux_too_small = self.stats.demux_too_small.saturating_add(1);
                 warn!("Illegal UDP packet from voice server.");
             },
         }
@@ -341,6 +387,8 @@ pub(crate) async fn runner(
         ssrc_signalling,
         dave_state,
         udp_socket,
+        stats: UdpRxStats::default(),
+        last_stats_report: Instant::now(),
     };
 
     state.run(&mut interconnect).await;
