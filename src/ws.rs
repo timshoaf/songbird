@@ -165,14 +165,27 @@ pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Gate
         _ => return Ok(None),
     };
 
-    if let Ok(evt) = serde_json::from_str::<Event>(text) {
-        return Ok(Some(GatewayMessage::Json(evt)));
-    }
-
     let value = serde_json::from_str::<Value>(text).map_err(|e| {
         warn!("Unexpected JSON parse failure: {e}. Payload: {text}");
         e
     })?;
+
+    if let Some(op) = value
+        .get("op")
+        .and_then(Value::as_u64)
+        .and_then(|v| u8::try_from(v).ok())
+    {
+        // Force DAVE control-plane opcodes through unknown-json path so they reach
+        // ws::process_ws_unknown_json even if voice-model parses them as generic events.
+        if matches!(op, 18 | 20 | 21 | 22 | 24 | 31) {
+            let data = value.get("d").cloned().unwrap_or(Value::Null);
+            return Ok(Some(GatewayMessage::UnknownJson { op, data }));
+        }
+    }
+
+    if let Ok(evt) = serde_json::from_str::<Event>(text) {
+        return Ok(Some(GatewayMessage::Json(evt)));
+    }
 
     let Some(op) = value
         .get("op")
