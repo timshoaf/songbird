@@ -16,6 +16,7 @@ use bytes::BytesMut;
 use discortp::{
     demux::{self, DemuxedMut},
     rtp::RtpPacket,
+    MutablePacket, Packet,
 };
 use flume::Receiver;
 use std::{
@@ -209,20 +210,18 @@ impl UdpRx {
                             Some(plain) => {
                                 let payload_len = payload.len();
                                 if rtp_body_start + plain.len() <= payload_len {
-                                    if let Some(payload_mut) = rtp.payload_mut() {
-                                        payload_mut[rtp_body_start..rtp_body_start + plain.len()]
-                                            .copy_from_slice(&plain);
-                                        rtp_body_tail =
-                                            payload_len - (rtp_body_start + plain.len());
-                                        decrypted = true;
-                                        tracing::debug!(
-                                            user_id,
-                                            ssrc = rtp.get_ssrc(),
-                                            in_len = encrypted_slice.len(),
-                                            out_len = plain.len(),
-                                            "DAVE inbound decrypt success"
-                                        );
-                                    }
+                                    let payload_mut = rtp.payload_mut();
+                                    payload_mut[rtp_body_start..rtp_body_start + plain.len()]
+                                        .copy_from_slice(&plain);
+                                    rtp_body_tail = payload_len - (rtp_body_start + plain.len());
+                                    decrypted = true;
+                                    tracing::debug!(
+                                        user_id,
+                                        ssrc = rtp.get_ssrc(),
+                                        in_len = encrypted_slice.len(),
+                                        out_len = plain.len(),
+                                        "DAVE inbound decrypt success"
+                                    );
                                 }
                             },
                             None => {
