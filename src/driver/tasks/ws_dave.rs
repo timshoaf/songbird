@@ -62,6 +62,9 @@ pub(crate) struct DaveState {
     pub(crate) last_binary_sequence: Option<u16>,
     pub(crate) local_user_id: Option<u64>,
     pub(crate) local_channel_id: Option<u64>,
+    pub(crate) seen_prepare_transition: bool,
+    pub(crate) seen_prepare_epoch: bool,
+    pub(crate) seen_external_sender: bool,
 
     #[cfg(feature = "dave-e2ee")]
     session: Option<DaveSession>,
@@ -101,6 +104,7 @@ impl DaveState {
     }
 
     pub(crate) fn on_prepare_transition(&mut self, msg: DavePrepareTransition) {
+        self.seen_prepare_transition = true;
         if let Some(current) = self.transition_id {
             if msg.transition_id < current {
                 return;
@@ -134,6 +138,7 @@ impl DaveState {
         user_id: u64,
         channel_id: u64,
     ) {
+        self.seen_prepare_epoch = true;
         if let Some(current) = self.transition_id {
             if msg.transition_id < current {
                 return;
@@ -226,6 +231,7 @@ impl DaveState {
                 if let Some(session) = self.session.as_mut() {
                     match op {
                         DaveBinaryOpcode::MlsExternalSender => {
+                            self.seen_external_sender = true;
                             let _ = session.set_external_sender(&packet.payload);
                             if let Ok(key_package) = session.create_key_package() {
                                 self.pending_key_package = Some(Bytes::from(key_package));
@@ -381,6 +387,22 @@ impl DaveState {
 
     pub(crate) fn take_pending_outbound(&mut self) -> Option<DaveOutboundMessage> {
         self.pending_outbound.pop_front()
+    }
+
+    pub(crate) fn handshake_status(&self) -> (&'static str, bool, bool, bool) {
+        let phase = if self.awaiting_transition_execute {
+            "awaiting_execute"
+        } else if self.transition_id.is_some() {
+            "transitioning"
+        } else {
+            "idle"
+        };
+        (
+            phase,
+            self.seen_prepare_transition,
+            self.seen_prepare_epoch,
+            self.seen_external_sender,
+        )
     }
 }
 

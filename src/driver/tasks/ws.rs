@@ -261,6 +261,17 @@ impl AuxNetwork {
     async fn flush_dave_outbound(&mut self) -> Result<(), WsError> {
         #[cfg(feature = "dave-e2ee")]
         {
+            {
+                let dave = self.dave_state.lock().expect("dave mutex poisoned");
+                let (phase, seen21, seen24, seen25) = dave.handshake_status();
+                if seen24 && !dave.dave_ready() {
+                    warn!(
+                        phase,
+                        seen21, seen24, seen25, "DAVE handshake observed but session not ready yet"
+                    );
+                }
+            }
+
             let maybe_payload = {
                 let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
                 dave.take_pending_key_package()
@@ -353,6 +364,19 @@ impl AuxNetwork {
                 }
                 match ws_dave::DaveBinaryOpcode::from_u8(pkt.opcode) {
                     Some(opcode) => {
+                        if matches!(opcode, ws_dave::DaveBinaryOpcode::MlsExternalSender) {
+                            let dave = self.dave_state.lock().expect("dave mutex poisoned");
+                            let (phase, seen21, seen24, seen25) = dave.handshake_status();
+                            debug!(
+                                phase,
+                                seen21,
+                                seen24,
+                                seen25,
+                                sequence = pkt.sequence,
+                                payload_len = pkt.payload.len(),
+                                "DAVE external sender observed"
+                            );
+                        }
                         trace!(
                             ?opcode,
                             sequence = pkt.sequence,
@@ -386,6 +410,16 @@ impl AuxNetwork {
                     {
                         let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
                         dave.on_prepare_transition(msg);
+                        let (phase, seen21, seen24, seen25) = dave.handshake_status();
+                        debug!(
+                            phase,
+                            seen21,
+                            seen24,
+                            seen25,
+                            transition_id = msg.transition_id,
+                            protocol_version = msg.protocol_version,
+                            "DAVE prepare transition observed"
+                        );
                     }
                     trace!(
                         transition_id = msg.transition_id,
@@ -421,6 +455,17 @@ impl AuxNetwork {
                     {
                         let mut dave = self.dave_state.lock().expect("dave mutex poisoned");
                         dave.on_prepare_epoch(msg, user_id, channel_id);
+                        let (phase, seen21, seen24, seen25) = dave.handshake_status();
+                        debug!(
+                            phase,
+                            seen21,
+                            seen24,
+                            seen25,
+                            transition_id = msg.transition_id,
+                            protocol_version = msg.protocol_version,
+                            epoch = msg.epoch,
+                            "DAVE prepare epoch observed"
+                        );
                     }
                     trace!(
                         transition_id = msg.transition_id,
