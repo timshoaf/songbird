@@ -298,12 +298,16 @@ impl DaveState {
                                 return;
                             };
                             let transition_id = transition_id as u32;
-                            if self.transition_id != Some(transition_id) {
-                                self.pending_outbound.push_back(DaveOutboundMessage::Json {
-                                    op: 31,
-                                    data: serde_json::json!({ "transition_id": transition_id }),
-                                });
-                                return;
+                            if let Some(current) = self.transition_id {
+                                if current != transition_id {
+                                    self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                                        op: 31,
+                                        data: serde_json::json!({ "transition_id": transition_id }),
+                                    });
+                                    return;
+                                }
+                            } else {
+                                self.transition_id = Some(transition_id);
                             }
 
                             match session.process_commit(commit) {
@@ -328,12 +332,16 @@ impl DaveState {
                                 return;
                             };
                             let transition_id = transition_id as u32;
-                            if self.transition_id != Some(transition_id) {
-                                self.pending_outbound.push_back(DaveOutboundMessage::Json {
-                                    op: 31,
-                                    data: serde_json::json!({ "transition_id": transition_id }),
-                                });
-                                return;
+                            if let Some(current) = self.transition_id {
+                                if current != transition_id {
+                                    self.pending_outbound.push_back(DaveOutboundMessage::Json {
+                                        op: 31,
+                                        data: serde_json::json!({ "transition_id": transition_id }),
+                                    });
+                                    return;
+                                }
+                            } else {
+                                self.transition_id = Some(transition_id);
                             }
 
                             match session.process_welcome(welcome) {

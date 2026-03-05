@@ -193,7 +193,7 @@ pub(crate) fn convert_ws_message(message: Option<Message>) -> Result<Option<Gate
 
         // Force DAVE control-plane opcodes through unknown-json path so they reach
         // ws::process_ws_unknown_json even if voice-model parses them as generic events.
-        if matches!(op, 18 | 20 | 21 | 22 | 24 | 31) {
+        if matches!(op, 21 | 22 | 24 | 31) {
             let data = value.get("d").cloned().unwrap_or(Value::Null);
             return Ok(Some(GatewayMessage::UnknownJson { op, data }));
         }

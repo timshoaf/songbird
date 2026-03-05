@@ -406,7 +406,7 @@ impl AuxNetwork {
 
     fn process_ws_unknown_json(&mut self, _interconnect: &Interconnect, op: u8, data: Value) {
         match op {
-            18 | 21 => {
+            21 => {
                 debug!(op, data = %data, "DAVE prepare transition raw payload");
                 if let Some(msg) = ws_dave::parse_prepare_transition(&data) {
                     {
@@ -447,7 +447,7 @@ impl AuxNetwork {
                     trace!(op, data = %data, "Malformed DAVE execute transition payload");
                 }
             },
-            20 | 24 => {
+            24 => {
                 debug!(op, data = %data, "DAVE prepare epoch raw payload");
                 if let Some(msg) = ws_dave::parse_prepare_epoch(&data) {
                     let user_id: u64 = self.info.user_id.0.get();
